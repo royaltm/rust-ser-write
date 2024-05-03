@@ -1,3 +1,4 @@
+//! JSON serializers for ser-write
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

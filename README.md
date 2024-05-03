@@ -10,10 +10,11 @@ In most cases for the Rust `std` you should probably use:
 Alternatively there's a Rust Embedded Community crate for serializeing JSONs without `std`:
 
 * [serde-json-core](https://crates.io/crates/serde-json-core)
+* [serde-json-core-fmt](https://crates.io/crates/serde-json-core-fmt) (a similar attempt to `ser-write` misusing `fmt::Display` trait)
 
-While both solutions are great for `std`, with bare-metal we either have to rely on `alloc` or use `serde-json-core` serialize to a slice.
+While both solutions are great for `std`, with bare-metal we either have to rely on `alloc` or use `serde-json-core`.
 
-What's missing here is a functionality of `serde_json::to_writer` with both `std`  library and `no-std`.
+What's missing here is a functionality of `serde_json::to_writer` with both `std` library and `no-std`.
 
 For example I have to construct frames for a particular protocol which modifies raw bytes in a specific way.
 With `serde-json-core` I have to serialize data first to an intermediate container.
@@ -24,9 +25,9 @@ There are some efforts to bring `io::Write` to `core` or at least provide someth
 
 Enter `ser-write`.
 
-This crate provides the trait - `SerWrite` which should be used by serializers implementing `serde::ser::Serializers`.
+This crate provides the trait - `SerWrite` which should be used by serializers.
 
-On the other end, projects can implement `SerWrite` for their own exotic containers.
+On the other end, embedded projects can implement `SerWrite` for their own exotic containers.
 
 Depending on the selected features, `SerWrite` is implemented for:
 
@@ -39,6 +40,7 @@ Depending on the selected features, `SerWrite` is implemented for:
 
 `std` and `alloc` features are here to help testing and reusing code in different environments.
 
+
 Serializers
 -----------
 
@@ -46,6 +48,7 @@ Currently available serializers are:
 
 * JSON (compact) - [ser-write-json](ser-write-json/)
 * MessagePack - [ser-write-msgpack](ser-write-msgpack/)
+
 
 Example
 -------
