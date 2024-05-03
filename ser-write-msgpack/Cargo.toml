@@ -1,0 +1,29 @@
+[package]
+name = "ser-write-msgpack"
+description = "MessagePack serializer for ser-write"
+authors = ["Rafal Michalski <royaltm75@gmail.com>"]
+version = "0.1.0"
+edition = "2021"
+keywords = ["embedded", "serde", "messagepack", "msgpack"]
+categories = ["no-std"]
+homepage = "https://github.com/royaltm/rust-ser-write"
+repository = "https://github.com/royaltm/rust-ser-write"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+exclude = [".github", ".gitignore"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["std"]
+std = []
+alloc = []
+
+[dependencies]
+serde = { version = "1.0.200", default-features = false }
+ser-write = { version = "0.1", path = ".." }
+
+[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }

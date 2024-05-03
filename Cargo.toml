@@ -1,0 +1,37 @@
+[package]
+name = "ser-write"
+description = "Common traits for bare-metal serializers"
+authors = ["Rafal Michalski <royaltm75@gmail.com>"]
+version = "0.1.0"
+edition = "2021"
+keywords = ["embedded", "serde"]
+categories = ["no-std"]
+homepage = "https://github.com/royaltm/rust-ser-write"
+repository = "https://github.com/royaltm/rust-ser-write"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+exclude = [".github", ".gitignore"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["std"]
+std = []
+alloc = []
+arrayvec = ["dep:arrayvec"]
+heapless = ["dep:heapless"]
+
+[dependencies]
+arrayvec = { version = "0.7", default-features = false, optional = true }
+heapless = { version = "0.8.0", default-features = false, optional = true }
+serde = { version = "1.0", default-features = false }
+
+[workspace]
+resolver = "2"
+members = [
+  ".",
+  "ser-write-json",
+  "ser-write-msgpack"
+]
