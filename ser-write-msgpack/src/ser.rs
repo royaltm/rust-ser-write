@@ -14,46 +14,14 @@ use super::magick::*;
 pub use ser_write::{SerWrite, SerError, SerResult};
 
 /// MessagePack serializer serializing structs to arrays and enum variants as indexes
-pub type StructCompactSerializer<W> = Serializer<W>;
-/// MessagePack serializer serializing structs to maps with field names and enum variants as names
-// pub type StructFieldNameSerializer<W> = Serializer<W, StructFieldNameFormatter>;
-
-pub struct Serializer<W> {
+pub struct CompactSerializer<W> {
     output: W
 }
 
-// impl<'a, W: SerWrite + 'a, F: VariantFormat + 'a> StructFormat<'a, W, F> for StructCompactFormatter {
-//     type SerializeStruct = SerializeStructArray<'a, Welf>;
-//     fn serialize_struct(ser: &'a mut Serializer<Welf>, len: usize) -> Result<Self::SerializeStruct>
-//         where &'a mut Serializer<Welf>: ser::Serializer<Ok=(), Error=SerError>
-//     {
-//         SerializeStructArray::start(ser, len)
-//     }
-// }
-
-/// Implements [`VariantFormat`] serializing structs and tuple structs to arrays and enum variants as indexes
-pub struct StructCompactFormatter;
-/// Implements [`VariantFormat`] serializing structs and tuple structs to maps and enum variants as names
-// pub struct StructFieldNameFormatter;
-
-// impl<W: SerWrite> VariantFormat<W> for StructFieldNameFormatter {
-//     type SerializeStruct = SerializeStruct<'a, W, Self>;
-//     #[inline(always)]
-//     fn serialize_variant<'a>(ser: &'a mut Serializer<W, Self>, _variant_index: u32, variant_name: &'static str) -> Result<()>
-//         where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=SerError>
-//     {
-//         ser.serialize_str(variant_name)
-//     }
-//     #[inline(always)]
-//     fn serialize_struct<'a>(ser: &'a mut Serializer<W, Self>, len: usize) -> Result<Self::SerializeStruct>
-//         where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=SerError,
-//                 SerializeStruct=Self::SerializeStruct,
-//                 SerializeStructVariant=Self::SerializeStruct>
-//     {
-//         write_map_len(&mut ser.output, len)?;
-//         Ok(SerializeStruct::new(ser))
-//     }    
-// }
+/// MessagePack serializer serializing structs to maps with field names and enum variants as names
+pub struct VerboseSerializer<W> {
+    output: W
+}
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
@@ -66,16 +34,16 @@ pub fn to_vec<T>(vec: &mut Vec<u8>, value: &T) -> Result<()>
     to_writer(vec, value)
 }
 
-// #[cfg(any(feature = "std", feature = "alloc"))]
-// #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-// /// Serialize as a MessagePack message to a vector of bytes
-// ///
-// /// Serialize data structures as maps where resulting message will contain field and enum variant names.
-// pub fn to_vec_named<T>(vec: &mut Vec<u8>, value: &T) -> Result<()>
-//     where T: Serialize,
-// {
-//     to_writer_named(vec, value)
-// }
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+/// Serialize as a MessagePack message to a vector of bytes
+///
+/// Serialize data structures as maps where resulting message will contain field and enum variant names.
+pub fn to_vec_named<T>(vec: &mut Vec<u8>, value: &T) -> Result<()>
+    where T: Serialize,
+{
+    to_writer_named(vec, value)
+}
 
 /// Serialize as a MessagePack message to a SerWrite implementation
 ///
@@ -83,46 +51,49 @@ pub fn to_vec<T>(vec: &mut Vec<u8>, value: &T) -> Result<()>
 pub fn to_writer<W, T>(writer: W, value: &T) -> Result<()>
     where W: SerWrite, T: Serialize
 {
-    let mut serializer = StructCompactSerializer::new(writer);
+    let mut serializer = CompactSerializer::new(writer);
     value.serialize(&mut serializer)
 }
 
-// /// Serialize as a MessagePack message to a SerWrite implementation
-// ///
-// /// Serialize data structures as maps where resulting message will contain field and enum variant names.
-// pub fn to_writer_named<W, T>(writer: W, value: &T) -> Result<()>
-//     where W: SerWrite, T: Serialize
-// {
-//     let mut serializer = StructFieldNameSerializer::new(writer);
-//     value.serialize(&mut serializer)
-// }
-
-pub trait StructSerializer<'a> {
-    type SerializeStruct;
-
-    fn serialize_variant(&mut self, variant_index: u32, variant_name: &'static str) -> Result<()>;
-    fn serialize_struct_impl(&'a mut self, len: usize) -> Result<Self::SerializeStruct>;
+/// Serialize as a MessagePack message to a SerWrite implementation
+///
+/// Serialize data structures as maps where resulting message will contain field and enum variant names.
+pub fn to_writer_named<W, T>(writer: W, value: &T) -> Result<()>
+    where W: SerWrite, T: Serialize
+{
+    let mut serializer = VerboseSerializer::new(writer);
+    value.serialize(&mut serializer)
 }
 
-impl<'a, W: SerWrite + 'a> StructSerializer<'a> for Serializer<W> {
-    type SerializeStruct = SerializeStructArray<'a, Serializer<W>>;
-    fn serialize_variant(&mut self, v: u32, _variant_name: &'static str) -> Result<()> {
-        write_u32(&mut self.output, v)
+impl<W: SerWrite> CompactSerializer<W> {
+    fn serialize_variant(&mut self, variant_index: u32, _variant_name: &'static str) -> Result<()> {
+        write_u32(&mut self.output, variant_index)
     }
 
-    fn serialize_struct_impl(&'a mut self, len: usize) -> Result<Self::SerializeStruct> {
+    fn serialize_struct<'a>(&'a mut self, len: usize) -> Result<SerializeStructArray<'a, CompactSerializer<W>>> {
         write_array_len(&mut self.output, len)?;
         Ok(SerializeStructArray { ser: self })
     }
 }
 
-// macro_rules! implement_serializer {
-//     ($serializer:ty) => {};
-// }
-impl<W> Serializer<W> {
+impl<W: SerWrite> VerboseSerializer<W> {
+    fn serialize_variant(&mut self, _variant_index: u32, variant_name: &'static str) -> Result<()> {
+        write_str(&mut self.output, variant_name)
+    }
+
+    fn serialize_struct<'a>(&'a mut self, len: usize) -> Result<SerializeStructMap<'a, VerboseSerializer<W>>> {
+        write_map_len(&mut self.output, len)?;
+        Ok(SerializeStructMap { ser: self })
+    }
+}
+
+macro_rules! implement_serializer {
+    ($serializer:ident, $struct_serializer:ident) => {
+
+impl<W> $serializer<W> {
     #[inline(always)]
     pub fn new(output: W) -> Self {
-        Serializer { output }
+        $serializer { output }
     }
 
     #[inline(always)]
@@ -131,17 +102,17 @@ impl<W> Serializer<W> {
     }
 }
 
-impl<'a, W: SerWrite> ser::Serializer for &'a mut Serializer<W> {
+impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
     type Ok = ();
     type Error = SerError;
 
-    type SerializeSeq = SerializeSeqMap<'a, Serializer<W>>;
-    type SerializeTuple = SerializeTuple<'a, Serializer<W>>;
-    type SerializeTupleStruct = SerializeTuple<'a, Serializer<W>>;
-    type SerializeTupleVariant = SerializeTuple<'a, Serializer<W>>;
-    type SerializeMap = SerializeSeqMap<'a, Serializer<W>>;
-    type SerializeStruct = <Serializer<W> as StructSerializer<'a>>::SerializeStruct;
-    type SerializeStructVariant = <Serializer<W> as StructSerializer<'a>>::SerializeStruct;
+    type SerializeSeq = SerializeSeqMap<'a, $serializer<W>>;
+    type SerializeTuple = SerializeTuple<'a, $serializer<W>>;
+    type SerializeTupleStruct = SerializeTuple<'a, $serializer<W>>;
+    type SerializeTupleVariant = SerializeTuple<'a, $serializer<W>>;
+    type SerializeMap = SerializeSeqMap<'a, $serializer<W>>;
+    type SerializeStruct = $struct_serializer<'a, $serializer<W>>;
+    type SerializeStructVariant = $struct_serializer<'a, $serializer<W>>;
 
     fn is_human_readable(&self) -> bool {
         false
@@ -306,9 +277,7 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut Serializer<W> {
     }
 
     fn serialize_str(self, v: &str) -> Result<()> {
-        let size = v.len();
-        write_str_len(&mut self.output, size)?;
-        self.output.write_str(v)
+        write_str(&mut self.output, v)
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<()> {
@@ -427,7 +396,7 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut Serializer<W> {
         _name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStruct> {
-        self.serialize_struct_impl(len)
+        self.serialize_struct(len)
     }
 
     // Struct variants are represented in JSON as `{ NAME: { K: V, ... } }`.
@@ -441,7 +410,7 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut Serializer<W> {
     ) -> Result<Self::SerializeStructVariant> {
         self.output.write_byte(FIXMAP|1)?;
         self.serialize_variant(variant_index, variant)?;
-        self.serialize_struct_impl(len)
+        self.serialize_struct(len)
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
@@ -467,6 +436,38 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut Serializer<W> {
         let mut col = StringCollector::new(len, &mut self.output);
         fmt::write(&mut col, format_args!("{}", value)).map_err(|_| SerError::BufferFull)
     }
+}
+
+};
+} /* implement_serializer */
+
+implement_serializer!(CompactSerializer, SerializeStructArray);
+implement_serializer!(VerboseSerializer, SerializeStructMap);
+
+#[inline]
+fn write_u32<W: SerWrite>(output: &mut W, v: u32) -> Result<()> {
+    if v <= MAX_POSFIXINT as u32 {
+        output.write_byte(v as u8)
+    }
+    else if let Ok(v) = u8::try_from(v) {
+        output.write_byte(UINT_8)?;
+        output.write_byte(v)
+    }
+    else if let Ok(v) = u16::try_from(v) {
+        output.write_byte(UINT_16)?;
+        output.write(&v.to_be_bytes())
+    }
+    else {
+        output.write_byte(UINT_32)?;
+        output.write(&v.to_be_bytes())
+    }
+}
+
+#[inline]
+fn write_str<W: SerWrite>(output: &mut W, v: &str) -> Result<()> {
+    let size = v.len();
+    write_str_len(output, size)?;
+    output.write_str(v)
 }
 
 #[inline]
@@ -528,25 +529,6 @@ fn write_map_len<W: SerWrite>(output: &mut W, len: usize) -> Result<()> {
         return Err(SerError::BufferFull)
     }
     Ok(())
-}
-
-#[inline]
-fn write_u32<W: SerWrite>(output: &mut W, v: u32) -> Result<()> {
-    if v <= MAX_POSFIXINT as u32 {
-        output.write_byte(v as u8)
-    }
-    else if let Ok(v) = u8::try_from(v) {
-        output.write_byte(UINT_8)?;
-        output.write_byte(v)
-    }
-    else if let Ok(v) = u16::try_from(v) {
-        output.write_byte(UINT_16)?;
-        output.write(&v.to_be_bytes())
-    }
-    else {
-        output.write_byte(UINT_32)?;
-        output.write(&v.to_be_bytes())
-    }
 }
 
 #[cfg(not(any(feature = "std", feature = "alloc")))]
@@ -765,34 +747,67 @@ impl<'a, S> ser::SerializeStructVariant for SerializeStructMap<'a, S>
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//     #[test]
-//     fn test_msgpack() {
+    #[test]
+    fn test_msgpack() {
+        #[derive(Serialize)]
+        enum Flavors {
+            Vanilla,
+            Chocolate,
+            Strawberry
+        }
+        #[derive(Serialize)]
+        enum Prices<'a> {
+            Vanilla(f32),
+            Chocolate(&'a str),
+            Strawberry { gold: u8, silver: u16 }
+        }
+        #[derive(Serialize)]
+        struct Unit;
+        #[derive(Serialize)]
+        struct Test {
+            compact: bool,
+            schema: u32,
+            unit: Unit
+        }
 
-//         #[derive(Serialize)]
-//         struct Unit;
-//         #[derive(Serialize)]
-//         struct Test {
-//             compact: bool,
-//             schema: u32,
-//             unit: Unit
-//         }
+        let test = Test {
+            compact: true,
+            schema: 0,
+            unit: Unit
+        };
+        let expected = b"\x83\xA7compact\xC3\xA6schema\x00\xA4unit\xC0";
+        let mut vec = Vec::new();
+        to_vec_named(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
+        let expected = b"\x93\xC3\x00\xC0";
+        vec.clear();
+        to_vec(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
 
-//         let test = Test {
-//             compact: true,
-//             schema: 0,
-//             unit: Unit
-//         };
-//         let expected = b"\x83\xA7compact\xC3\xA6schema\x00\xA4unit\xC0";
-//         let mut vec = Vec::new();
-//         to_vec_named(&mut vec, &test).unwrap();
-//         assert_eq!(&vec, expected);
-//         let expected = b"\x93\xA7\xC3\xA6\x00\xA4\xC0";
-//         vec.clear();
-//         to_vec(&mut vec, &test).unwrap();
-//         assert_eq!(&vec, expected);
-//     }
-// }
+        let test = [Flavors::Strawberry, Flavors::Vanilla, Flavors::Chocolate];
+        let expected = b"\x93\xAAStrawberry\xA7Vanilla\xA9Chocolate";
+        vec.clear();
+        to_vec_named(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
+        let expected = b"\x93\x02\x00\x01";
+        vec.clear();
+        to_vec(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
+
+        let test = (Prices::Strawberry { gold: 7, silver: 1000 },
+                    Prices::Vanilla(12.5),
+                    Prices::Chocolate("free"));
+        let expected = b"\x93\x81\xAAStrawberry\x82\xA4gold\x07\xA6silver\xCD\x03\xE8\x81\xA7Vanilla\xCA\x41\x48\x00\x00\x81\xA9Chocolate\xA4free";
+        vec.clear();
+        to_vec_named(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
+        let expected = b"\x93\x81\x02\x92\x07\xCD\x03\xE8\x81\x00\xCA\x41\x48\x00\x00\x81\x01\xA4free";
+        vec.clear();
+        to_vec(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
+    }
+}
