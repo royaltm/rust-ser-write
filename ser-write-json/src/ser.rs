@@ -749,4 +749,23 @@ mod tests {
         let expected = "\"\\\"\\u0000\\b\\t\\n\\f\\rłączka\\u001F\\\\\x7f\\\"\"";
         assert_eq!(to_string(&s).unwrap(), expected);
     }
+
+    #[test]
+    fn test_json_bytes() {
+        #[derive(Serialize)]
+        struct Test {
+            #[serde(with = "serde_bytes")]
+            key: Vec<u8>,
+        }
+        let mut vec = Vec::new();
+        let expected = r#"[{"key":{"Struct":{"a":1}}}]"#;
+        let value = [Test { key: r#"{"Struct":{"a":1}}"#.as_bytes().into() }];
+        to_writer_pass_bytes(&mut vec, &value).unwrap();
+        let s = String::from_utf8(vec).unwrap();
+        assert_eq!(s, expected);
+        let expected = r#"[{"key":"7B22537472756374223A7B2261223A317D7D"}]"#;
+        assert_eq!(&to_string_hex_bytes(&value).unwrap(), expected);
+        let expected = r#"[{"key":[123,34,83,116,114,117,99,116,34,58,123,34,97,34,58,49,125,125]}]"#;
+        assert_eq!(&to_string(&value).unwrap(), expected);
+    }
 }
