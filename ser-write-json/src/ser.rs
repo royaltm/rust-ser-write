@@ -17,6 +17,8 @@ pub use ser_write::{SerWrite, SerError, SerResult};
 pub type SerializerByteArray<W> = Serializer<W, ArrayByteFormatter>;
 /// JSON serializer serializing bytes to a hexadecimal string
 pub type SerializerByteHexStr<W> = Serializer<W, HexStrByteFormatter>;
+/// JSON serializer serializing bytes to a base-64 string
+pub type SerializerByteBase64<W> = Serializer<W, B64StrByteFormatter>;
 /// JSON serializer passing bytes through
 pub type SerializerBytePass<W> = Serializer<W, PassThroughByteFormatter>;
 
@@ -36,6 +38,8 @@ pub trait BytesFormat: Sized {
 pub struct ArrayByteFormatter;
 /// Implements [`BytesFormat::serialize_bytes`] serializing to a hexadecimal string
 pub struct HexStrByteFormatter;
+/// Implements [`BytesFormat::serialize_bytes`] serializing to a base-64 string
+pub struct B64StrByteFormatter;
 /// Implements [`BytesFormat::serialize_bytes`] passing bytes through
 pub struct PassThroughByteFormatter;
 
@@ -60,6 +64,16 @@ impl BytesFormat for HexStrByteFormatter {
         for &byte in v.iter() {
             ser.output.write(&hex(byte))?;
         }
+        ser.output.write_byte(b'"')
+    }
+}
+
+impl BytesFormat for B64StrByteFormatter {
+    fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<()>
+        where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=SerError>
+    {
+        ser.output.write_byte(b'"')?;
+        crate::base64::encode(&mut ser.output, v)?;
         ser.output.write_byte(b'"')
     }
 }
@@ -94,6 +108,16 @@ pub fn to_string_hex_bytes<T>(value: &T) -> Result<String>
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+pub fn to_string_b64_bytes<T>(value: &T) -> Result<String>
+    where T: Serialize + ?Sized
+{
+    let mut vec = Vec::new();
+    to_writer_b64_bytes(&mut vec, value)?;
+    Ok(unsafe { String::from_utf8_unchecked(vec) })
+}
+
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
 pub fn to_string_pass_bytes<T>(value: &T) -> Result<String>
     where T: Serialize + ?Sized
 {
@@ -119,6 +143,16 @@ pub fn to_writer_hex_bytes<W, T>(writer: W, value: &T) -> Result<()>
     where W: SerWrite, T: Serialize + ?Sized
 {
     let mut serializer = SerializerByteHexStr::new(writer);
+    value.serialize(&mut serializer)
+}
+
+/// Serialize JSON to a SerWrite implementation
+///
+/// Serialize bytes as base-64 strings.
+pub fn to_writer_b64_bytes<W, T>(writer: W, value: &T) -> Result<()>
+    where W: SerWrite, T: Serialize + ?Sized
+{
+    let mut serializer = SerializerByteBase64::new(writer);
     value.serialize(&mut serializer)
 }
 
@@ -775,6 +809,8 @@ mod tests {
         assert_eq!(s, expected);
         let expected = r#"[{"key":"7B22537472756374223A7B2261223A317D7D"}]"#;
         assert_eq!(&to_string_hex_bytes(&value).unwrap(), expected);
+        let expected = r#"[{"key":"eyJTdHJ1Y3QiOnsiYSI6MX19"}]"#;
+        assert_eq!(&to_string_b64_bytes(&value).unwrap(), expected);
         let expected = r#"[{"key":[123,34,83,116,114,117,99,116,34,58,123,34,97,34,58,49,125,125]}]"#;
         assert_eq!(&to_string(&value).unwrap(), expected);
     }

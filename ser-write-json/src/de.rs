@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 use core::cell::Cell;
-use std::println;
+// use std::println;
 
 use serde::forward_to_deserialize_any;
 use serde::de::{SeqAccess, MapAccess, DeserializeSeed};
@@ -10,6 +10,24 @@ use core::str::{Utf8Error, FromStr};
 use core::{fmt, str};
 
 use serde::de::{self, Visitor};
+
+/// JSON deserializer with bytes deserialized from strings without any special decoding (UTF-8)
+pub type DeserializerBytePassStr<'de> = Deserializer<'de, BytePassStrParser>;
+/// JSON deserializer with bytes deserialized from strings encoded as hexadecimal byte codes
+pub type DeserializerByteHexStr<'de> = Deserializer<'de, ByteHexStrParser>;
+/// JSON deserializer with bytes deserialized from strings encoded as base64
+pub type DeserializerByteB64Str<'de> = Deserializer<'de, ByteBase64StrParser>;
+
+fn from_mut_slice_byte_flavor<'a, P, T>(v: &'a mut [u8]) -> Result<T>
+    where T: de::Deserialize<'a>,
+          Deserializer<'a, P>: ParseStringAsBytes<'a>
+{
+    let mut de = Deserializer::<P>::from_mut_slice(v);
+    let value = de::Deserialize::deserialize(&mut de)?;
+    de.end()?;
+
+    Ok(value)
+}
 
 /// Deserializes an instance of type `T` from a mutable slice of bytes of JSON text.
 ///
@@ -22,19 +40,44 @@ use serde::de::{self, Visitor};
 pub fn from_mut_slice<'a, T>(v: &'a mut [u8]) -> Result<T>
     where T: de::Deserialize<'a>
 {
-    let mut de = Deserializer::from_mut_slice(v);
-    let value = de::Deserialize::deserialize(&mut de)?;
-    de.end()?;
+    from_mut_slice_byte_flavor::<BytePassStrParser, _>(v)
+}
 
-    Ok(value)
+/// Deserializes an instance of type `T` from a mutable slice of bytes of JSON text.
+///
+/// The provided slice must be writable so the deserializer can unescape strings 
+/// and parse bytes from arrays or strings in-place.
+///
+/// __NOTE__: Assume the original slice content will be modified!
+///
+/// Any `&str` or `&[u8]` in the returned type will contain references to the provided slice.
+pub fn from_mut_slice_hex_bytes<'a, T>(v: &'a mut [u8]) -> Result<T>
+    where T: de::Deserialize<'a>
+{
+    from_mut_slice_byte_flavor::<ByteHexStrParser, _>(v)
+}
+
+/// Deserializes an instance of type `T` from a mutable slice of bytes of JSON text.
+///
+/// The provided slice must be writable so the deserializer can unescape strings 
+/// and parse bytes from arrays or strings in-place.
+///
+/// __NOTE__: Assume the original slice content will be modified!
+///
+/// Any `&str` or `&[u8]` in the returned type will contain references to the provided slice.
+pub fn from_mut_slice_base64_bytes<'a, T>(v: &'a mut [u8]) -> Result<T>
+    where T: de::Deserialize<'a>
+{
+    from_mut_slice_byte_flavor::<ByteBase64StrParser, _>(v)
 }
 
 /// Deserialization result
 pub type Result<T> = core::result::Result<T, Error>;
 
-pub struct Deserializer<'de> {
+pub struct Deserializer<'de, P> {
     input: &'de mut[u8],
-    index: usize
+    index: usize,
+    _parser: core::marker::PhantomData<P>
 }
 
 impl From<Utf8Error> for Error {
@@ -156,21 +199,29 @@ impl fmt::Display for Error {
     }
 }
 
-// special JSON characters
+pub struct BytePassStrParser;
+pub struct ByteHexStrParser;
+pub struct ByteBase64StrParser;
+
+pub trait ParseStringAsBytes<'de> {
+    fn parse_str_content_as_bytes(&mut self) -> Result<&'de[u8]>;
+}
+
+/* special JSON characters */
 const SP: u8 = b' ';
 const QU: u8 = b'"';
 const RS: u8 = b'\\';
 const SO: u8 = b'/';
-// special JSON string escape characters
+/* special JSON string escape characters */
 const B_: u8 = 0x08; const BB: u8 = b'b'; // \b -> \x08
 const T_: u8 = 0x09; const TT: u8 = b't'; // \t -> \x09
 const N_: u8 = 0x0A; // const NN: u8 = b'n'; // \n -> \x0A
 const F_: u8 = 0x0C; // const FF: u8 = b'f'; // \f => \x0C
 const R_: u8 = 0x0D; // const RR: u8 = b'r'; // \r => \x0D
-// \uUUUU
+/* \uUUUU */
 const UU: u8 = b'u';
 const __: u8 = 0;
-// only selected (un)escape codes are permitted
+/* only selected (un)escape codes are permitted */
 static UNESCAPE: [u8;19] = [
 /* \b,  c,  d,  e, \f,  g,  h,  i,  j,  k,  l,  m, \n,  o,  p,  q, \r,  s, \t */
     B_, __, __, __, F_, __, __, __, __, __, __, __, N_, __, __, __, R_, __, T_
@@ -249,10 +300,10 @@ macro_rules! impl_checked_sub {
 impl_parse_tool!(u8, u16, u32, u64, i8, i16, i32, i64);
 impl_checked_sub!(i8, i16, i32, i64);
 
-impl<'de> Deserializer<'de> {
+impl<'de, P> Deserializer<'de, P> {
     /// Provide a mutable slice, so strings can be unescaped in-place
     pub fn from_mut_slice(input: &'de mut[u8]) -> Self {
-        Deserializer { input, index: 0 }
+        Deserializer { input, index: 0, _parser: core::marker::PhantomData }
     }
 
     /// Return the next ASCII code
@@ -509,8 +560,15 @@ impl<'de> Deserializer<'de> {
         }
     }
 
-    /// Parses a string, handles escape sequences using in-place copy, call after eating an opening '"'
     fn parse_str_content(&mut self) -> Result<&'de str> {
+        core::str::from_utf8(self.parse_str_bytes_content()?)
+        .map_err(From::from)
+    }
+
+    /// Parse a string until a closing '"' is found.
+    ///
+    /// Handles escape sequences using in-place copy, call after eating an opening '"'
+    fn parse_str_bytes_content(&mut self) -> Result<&'de[u8]> {
         let mut index = self.index;
         let mut dest = index;
         let mut start = index;
@@ -529,7 +587,7 @@ impl<'de> Deserializer<'de> {
                 match self.input[end] {
                     QU => { /* '"' found */
                         /* return as str and eat a gap with a closing '"' */
-                        break Ok(core::str::from_utf8(self.split_some(end - gap, gap + 1))?)
+                        break Ok(self.split_some(end - gap, gap + 1))
                     }
                     RS => { /* '\' found */
                         dest += end - index;
@@ -574,37 +632,6 @@ impl<'de> Deserializer<'de> {
         }
     }
 
-    fn parse_hex_bytes_content(&mut self) -> Result<&'de[u8]> {
-        let input = self.input.get_mut(self.index..).ok_or_else(|| Error::UnexpectedEof)?;
-        let cells = Cell::from_mut(input).as_slice_of_cells();
-        let mut src = cells.chunks_exact(2);
-        let mut len = 0;
-        let mut iter = src.by_ref().zip(cells.into_iter());
-        while let Some(([a, b], t)) = iter.next() {
-            if let Some(n) = parse_hex_nib(a.get()) {
-                if let Some(m) = parse_hex_nib(b.get()) {
-                    t.set((n << 4) + m);
-                }
-                else {
-                    return Err(Error::UnexpectedChar)
-                }
-            }
-            else if a.get() == QU {
-                return Ok(self.split_some(self.index + len, len + 1))
-            }
-            else {
-                return Err(Error::UnexpectedChar)
-            }
-            len = len + 1;
-        }
-        if let [c] = src.remainder() {
-            if c.get() == QU {
-                return Ok(self.split_some(self.index + len, len + 1))
-            }
-        }
-        Err(Error::UnexpectedChar)
-    }
-
     fn parse_array_bytes_content(&mut self) -> Result<&'de[u8]> {
         if b']' == self.eat_whitespace()? {
             return Ok(self.split_some(self.index, 1))
@@ -647,7 +674,76 @@ impl<'de> Deserializer<'de> {
     }
 }
 
-impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
+impl<'de> ParseStringAsBytes<'de> for Deserializer<'de, BytePassStrParser> {
+    #[inline(always)]
+    fn parse_str_content_as_bytes(&mut self) -> Result<&'de[u8]> {
+        self.parse_str_bytes_content()
+    }
+}
+
+impl<'de> ParseStringAsBytes<'de> for Deserializer<'de, ByteHexStrParser> {
+    fn parse_str_content_as_bytes(&mut self) -> Result<&'de[u8]> {
+        let input = self.input.get_mut(self.index..).ok_or_else(|| Error::UnexpectedEof)?;
+        let cells = Cell::from_mut(input).as_slice_of_cells();
+        let mut src = cells.chunks_exact(2);
+        let mut len = 0;
+        let mut iter = src.by_ref().zip(cells.into_iter());
+        while let Some(([a, b], t)) = iter.next() {
+            if let Some(n) = parse_hex_nib(a.get()) {
+                if let Some(m) = parse_hex_nib(b.get()) {
+                    t.set((n << 4) + m);
+                }
+                else {
+                    return Err(Error::UnexpectedChar)
+                }
+            }
+            else if a.get() == QU {
+                return Ok(self.split_some(self.index + len, len + 1))
+            }
+            else {
+                return Err(Error::UnexpectedChar)
+            }
+            len = len + 1;
+        }
+        match src.remainder() {
+            [] => Err(Error::UnexpectedEof),
+            [c] if c.get() == QU => {
+                Ok(self.split_some(self.index + len, len + 1))
+            }
+            _ => Err(Error::UnexpectedChar)
+        }
+    }
+}
+
+impl<'de> ParseStringAsBytes<'de> for Deserializer<'de, ByteBase64StrParser> {
+    fn parse_str_content_as_bytes(&mut self) -> Result<&'de[u8]> {
+        let input = self.input.get_mut(self.index..).ok_or_else(|| Error::UnexpectedEof)?;
+        if let Some((dlen, mut elen)) = crate::base64::decode(input) {
+            match input[elen] {
+                QU => return Ok(self.split_some(dlen, elen - dlen)),
+                b'=' => { /* eat padding */
+                    if let Some(pos) = input.get(elen+1..).and_then(|slice|
+                        slice.iter().position(|&b| b != b'='))
+                    {
+                        elen = elen + 1 + pos;
+                        if input[elen] == QU {
+                            return Ok(self.split_some(dlen, elen + 1 - dlen));
+                        }
+                        else {
+                            return Err(Error::UnexpectedChar)
+                        }
+                    }
+                }
+                _ => return Err(Error::UnexpectedChar)
+            }
+        }
+        Err(Error::UnexpectedEof)
+    }
+}
+
+impl<'de, 'a, P> de::Deserializer<'de> for &'a mut Deserializer<'de, P>
+    where Deserializer<'de, P>: ParseStringAsBytes<'de>
+{
     type Error = Error;
 
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
@@ -785,7 +881,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         let bytes = match self.eat_whitespace()? {
             b'"' => {
                 self.eat_some(1);
-                self.parse_hex_bytes_content()?
+                self.parse_str_content_as_bytes()?
             }
             b'[' => {
                 self.eat_some(1);
@@ -966,13 +1062,13 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     }
 }
 
-struct CommaSeparated<'a, 'de: 'a> {
-    de: &'a mut Deserializer<'de>,
+struct CommaSeparated<'a, 'de: 'a, P> {
+    de: &'a mut Deserializer<'de, P>,
     first: bool,
 }
 
-impl<'a, 'de> CommaSeparated<'a, 'de> {
-    fn new(de: &'a mut Deserializer<'de>) -> Self {
+impl<'a, 'de, P> CommaSeparated<'a, 'de, P> {
+    fn new(de: &'a mut Deserializer<'de, P>) -> Self {
         CommaSeparated {
             de,
             first: true,
@@ -982,7 +1078,9 @@ impl<'a, 'de> CommaSeparated<'a, 'de> {
 
 // `SeqAccess` is provided to the `Visitor` to give it the ability to iterate
 // through elements of the sequence.
-impl<'de, 'a> SeqAccess<'de> for CommaSeparated<'a, 'de> {
+impl<'de, 'a, P> SeqAccess<'de> for CommaSeparated<'a, 'de, P> 
+    where Deserializer<'de, P>: ParseStringAsBytes<'de>
+{
     type Error = Error;
 
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>>
@@ -1012,7 +1110,9 @@ impl<'de, 'a> SeqAccess<'de> for CommaSeparated<'a, 'de> {
 
 // `MapAccess` is provided to the `Visitor` to give it the ability to iterate
 // through entries of the map.
-impl<'a, 'de> MapAccess<'de> for CommaSeparated<'a, 'de> {
+impl<'a, 'de, P> MapAccess<'de> for CommaSeparated<'a, 'de, P> 
+    where Deserializer<'de, P>: ParseStringAsBytes<'de>
+{
     type Error = Error;
 
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>>
@@ -1052,11 +1152,13 @@ impl<'a, 'de> MapAccess<'de> for CommaSeparated<'a, 'de> {
     }
 }
 
-struct MapKey<'a, 'de> {
-    de: &'a mut Deserializer<'de>
+struct MapKey<'a, 'de, P> {
+    de: &'a mut Deserializer<'de, P>
 }
 
-impl<'de, 'a> de::Deserializer<'de> for MapKey<'a, 'de> {
+impl<'de, 'a, P> de::Deserializer<'de> for MapKey<'a, 'de, P> 
+    where Deserializer<'de, P>: ParseStringAsBytes<'de>
+{
     type Error = Error;
 
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
@@ -1078,11 +1180,13 @@ impl<'de, 'a> de::Deserializer<'de> for MapKey<'a, 'de> {
     }
 }
 
-struct UnitVariantAccess<'a, 'de> {
-    de: &'a mut Deserializer<'de>,
+struct UnitVariantAccess<'a, 'de, P> {
+    de: &'a mut Deserializer<'de, P>,
 }
 
-impl<'a, 'de> de::EnumAccess<'de> for UnitVariantAccess<'a, 'de> {
+impl<'a, 'de, P> de::EnumAccess<'de> for UnitVariantAccess<'a, 'de, P> 
+    where Deserializer<'de, P>: ParseStringAsBytes<'de>
+{
     type Error = Error;
     type Variant = Self;
 
@@ -1094,7 +1198,9 @@ impl<'a, 'de> de::EnumAccess<'de> for UnitVariantAccess<'a, 'de> {
     }
 }
 
-impl<'a, 'de> de::VariantAccess<'de> for UnitVariantAccess<'a, 'de> {
+impl<'a, 'de, P> de::VariantAccess<'de> for UnitVariantAccess<'a, 'de, P> 
+    where Deserializer<'de, P>: ParseStringAsBytes<'de>
+{
     type Error = Error;
 
     fn unit_variant(self) -> Result<()> {
@@ -1120,11 +1226,13 @@ impl<'a, 'de> de::VariantAccess<'de> for UnitVariantAccess<'a, 'de> {
     }
 }
 
-struct VariantAccess<'a, 'de> {
-    de: &'a mut Deserializer<'de>,
+struct VariantAccess<'a, 'de, P> {
+    de: &'a mut Deserializer<'de, P>,
 }
 
-impl<'a, 'de> de::EnumAccess<'de> for VariantAccess<'a, 'de> {
+impl<'a, 'de, P> de::EnumAccess<'de> for VariantAccess<'a, 'de, P> 
+    where Deserializer<'de, P>: ParseStringAsBytes<'de>
+{
     type Error = Error;
     type Variant = Self;
 
@@ -1137,7 +1245,9 @@ impl<'a, 'de> de::EnumAccess<'de> for VariantAccess<'a, 'de> {
     }
 }
 
-impl<'a, 'de> de::VariantAccess<'de> for VariantAccess<'a, 'de> {
+impl<'a, 'de, P> de::VariantAccess<'de> for VariantAccess<'a, 'de, P> 
+    where Deserializer<'de, P>: ParseStringAsBytes<'de>
+{
     type Error = Error;
 
     fn unit_variant(self) -> Result<()> {
@@ -1173,33 +1283,33 @@ mod tests {
     fn test_parse_str_content() {
         let mut test = [0;1];
         test.copy_from_slice(br#"""#);
-        let mut deser = Deserializer::from_mut_slice(&mut test);
+        let mut deser = DeserializerBytePassStr::from_mut_slice(&mut test);
         assert_eq!(deser.parse_str_content().unwrap(), "");
 
         let mut test = [0;13];
         test.copy_from_slice(br#"Hello World!""#);
-        let mut deser = Deserializer::from_mut_slice(&mut test);
+        let mut deser = DeserializerBytePassStr::from_mut_slice(&mut test);
         assert_eq!(deser.parse_str_content().unwrap(), "Hello World!");
         assert!(deser.input.is_empty());
         assert_eq!(deser.index, 0);
 
         let mut test = [0;46];
         test.copy_from_slice(br#"\u0020Hello\r\\ \b\nW\tor\fld\u007Fy\u0306!\"""#);
-        let mut deser = Deserializer::from_mut_slice(&mut test);
+        let mut deser = DeserializerBytePassStr::from_mut_slice(&mut test);
         assert_eq!(deser.parse_str_content().unwrap(), " Hello\r\\ \x08\nW\tor\x0cld\x7fy̆!\"");
         assert!(deser.input.is_empty());
         assert_eq!(deser.index, 0);
 
         let mut test = [0;13];
         test.copy_from_slice(br#"Hello World!""#);
-        let mut deser = Deserializer::from_mut_slice(&mut test);
+        let mut deser = DeserializerBytePassStr::from_mut_slice(&mut test);
         assert_eq!(deser.parse_str_content().unwrap(), "Hello World!");
         assert!(deser.input.is_empty());
         assert_eq!(deser.index, 0);
 
         let mut test = [0;2];
         test.copy_from_slice(b"\n\"");
-        let mut deser = Deserializer::from_mut_slice(&mut test);
+        let mut deser = DeserializerBytePassStr::from_mut_slice(&mut test);
         assert_eq!(deser.parse_str_content(), Err(Error::StringControlChar));
     }
 
@@ -1238,41 +1348,41 @@ mod tests {
 
         let mut vec = Vec::new();
         vec.extend_from_slice(b"[]");
-        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        let bytes: &[u8] = from_mut_slice_hex_bytes(&mut vec).unwrap();
         assert_eq!(bytes, []);
 
         vec.clear(); vec.extend_from_slice(br#""""#);
-        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        let bytes: &[u8] = from_mut_slice_hex_bytes(&mut vec).unwrap();
         assert_eq!(bytes, []);
 
         vec.clear(); vec.extend_from_slice(b"[0]");
-        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        let bytes: &[u8] = from_mut_slice_hex_bytes(&mut vec).unwrap();
         assert_eq!(bytes, [0]);
 
         vec.clear(); vec.extend_from_slice(br#""FF""#);
-        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        let bytes: &[u8] = from_mut_slice_hex_bytes(&mut vec).unwrap();
         assert_eq!(bytes, [255]);
 
         vec.clear(); vec.extend_from_slice(b"");
-        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
         vec.clear(); vec.extend_from_slice(br#"""#);
-        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
         vec.clear(); vec.extend_from_slice(br#""0""#);
-        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
         vec.clear(); vec.extend_from_slice(br#""ABC""#);
-        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
         vec.clear(); vec.extend_from_slice(br#""Xy""#);
-        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
         vec.clear(); vec.extend_from_slice(b"[");
-        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
         vec.clear(); vec.extend_from_slice(b"[-1]");
-        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
         vec.clear(); vec.extend_from_slice(b"[256]");
-        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
         vec.clear(); vec.extend_from_slice(b"[,]");
-        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
         vec.clear(); vec.extend_from_slice(b"[0,]");
-        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
 
         #[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
         #[serde(default)]
@@ -1290,12 +1400,12 @@ mod tests {
         let expected = br#"{"owned":[0,10,11,12,13,14,15,16,17,18,19,255]}"#;
         crate::to_writer(&mut vec, &test).unwrap();
         assert_eq!(&vec, expected);
-        assert_eq!(from_mut_slice::<Test>(&mut vec).unwrap(), test);
+        assert_eq!(from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(), test);
 
         vec.clear();
         vec.extend_from_slice(br#" { "owned" : [  255, 127, 128, 0  ] } "#);
         assert_eq!(
-            from_mut_slice::<Test>(&mut vec).unwrap(),
+            from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(),
             Test { owned: Some(vec![255,127,128,0]), ..Test::default() }
         );
 
@@ -1304,12 +1414,12 @@ mod tests {
         let expected = br#"{"owned":"000A0B0C0D0E0F10111213FF","tail":false}"#;
         crate::to_writer_hex_bytes(&mut vec, &test).unwrap();
         assert_eq!(&vec, expected);
-        assert_eq!(from_mut_slice::<Test>(&mut vec).unwrap(), test);
+        assert_eq!(from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(), test);
 
         vec.clear();
         vec.extend_from_slice(br#" { "tail" :true ,"owned": "DEADBACA9970" } "#);
         assert_eq!(
-            from_mut_slice::<Test>(&mut vec).unwrap(),
+            from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(),
             Test { tail: Some(true), owned: Some(vec![0xde,0xad,0xba,0xca,0x99,0x70]), ..Test::default() }
         );
 
@@ -1318,19 +1428,19 @@ mod tests {
         let expected = br#"{"borrowed":[0,10,11,12,13,14,15,16,17,18,19,255]}"#;
         crate::to_writer(&mut vec, &test).unwrap();
         assert_eq!(&vec, expected);
-        assert_eq!(from_mut_slice::<Test>(&mut vec).unwrap(), test);
+        assert_eq!(from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(), test);
 
         vec.clear();
         vec.extend_from_slice(br#" { "borrowed" : [  255, 127, 128, 0  ] ,"tail"  :false}"#);
         assert_eq!(
-            from_mut_slice::<Test>(&mut vec).unwrap(),
+            from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(),
             Test { borrowed: Some(&[255,127,128,0]), tail: Some(false), ..Test::default() }
         );
 
         vec.clear();
         vec.extend_from_slice(br#" { "borrowed" : "DEADBACA9970" ,"tail"  :null, "owned":null } "#);
         assert_eq!(
-            from_mut_slice::<Test>(&mut vec).unwrap(),
+            from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(),
             Test { borrowed: Some(&[0xde,0xad,0xba,0xca,0x99,0x70]), ..Test::default() }
         );
 
@@ -1339,26 +1449,26 @@ mod tests {
         let expected = br#"{"borrowed":"000A0B0C0D0E0F10111213FF","tail":true}"#;
         crate::to_writer_hex_bytes(&mut vec, &test).unwrap();
         assert_eq!(&vec, expected);
-        assert_eq!(from_mut_slice::<Test>(&mut vec).unwrap(), test);
+        assert_eq!(from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(), test);
 
         vec.clear();
         vec.extend_from_slice(br#" { "borrowed": [  ] , "tail" :  false ,  "owned"   :  "" }  "#);
         assert_eq!(
-            from_mut_slice::<Test>(&mut vec).unwrap(),
+            from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(),
             Test { borrowed: Some(&[]), tail: Some(false), owned: Some(vec![]) }
         );
 
         vec.clear();
         vec.extend_from_slice(br#"{"tail":null,"owned":[],"borrowed":""}"#);
         assert_eq!(
-            from_mut_slice::<Test>(&mut vec).unwrap(),
+            from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(),
             Test { borrowed: Some(&[]), tail: None, owned: Some(vec![]) }
         );
 
         vec.clear();
         vec.extend_from_slice(br#" {   }  "#);
         assert_eq!(
-            from_mut_slice::<Test>(&mut vec).unwrap(),
+            from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(),
             Test::default()
         );
     }
