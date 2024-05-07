@@ -3,7 +3,7 @@ use crate::{SerWrite, SerResult};
 
 static ALPHABET: &[u8;64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/// Encode bytes as base-64 into SerWrite.
+/// Encode bytes as base-64 char codes into SerWrite.
 ///
 /// This function does not append base64 '=' padding
 pub fn encode<W: SerWrite>(ser: &mut W, bytes: &[u8]) -> SerResult<()> {
@@ -119,7 +119,7 @@ pub fn decode(slice: &mut[u8]) -> Option<(usize, usize)> {
             Ok(packed) => {
                 // SAFETY: dest and chunks iterate over the same cells slice,
                 // while for every 4 byte chunk only 3 dest bytes are consumed,
-                // there's no way dest.next() can be None at this point
+                // there's no way dest.next() can be None at any point
                 unsafe {
                     dest.next().unwrap_unchecked().set((packed >> 16) as u8);
                     dest.next().unwrap_unchecked().set((packed >> 8) as u8);

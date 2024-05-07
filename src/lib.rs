@@ -13,43 +13,31 @@ mod foreign;
 
 pub type SerResult<T> = Result<T, SerError>;
 
-/// An error returned by [`SerWrite`] and serializers
+/// An error returned by [`SerWrite`]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SerError {
     /// Buffer is full
     BufferFull,
-    /// Undetermined map length or too many items
-    MapLength,
-    /// Undetermined sequence length or too many items
-    SeqLength,
-    /// Serializer could not determine string size
-    StrLength,
-    /// Not covered by the above cases
-    OtherError,
 }
 
-impl serde::de::StdError for SerError {}
+// impl serde::de::StdError for SerError {}
 
 impl fmt::Display for SerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SerError::BufferFull => f.write_str("buffer is full"),
-            SerError::MapLength => f.write_str("unknown or invalid map length"),
-            SerError::SeqLength => f.write_str("unknown or invalid sequence length"),
-            SerError::StrLength => f.write_str("invalid string length"),
-            SerError::OtherError => f.write_str("other serialize error")
         }
     }
 }
 
-impl serde::ser::Error for SerError {
-    fn custom<T>(_msg: T) -> Self
-        where T: fmt::Display
-    {
-        unreachable!()
-    }
-}
+// impl serde::ser::Error for SerError {
+//     fn custom<T>(_msg: T) -> Self
+//         where T: fmt::Display
+//     {
+//         unreachable!()
+//     }
+// }
 
 /// Serializers should write data to the implementations of this trait.
 pub trait SerWrite {
@@ -87,14 +75,14 @@ pub struct SliceWriter<'a> {
 }
 
 impl<'a> AsRef<[u8]> for SliceWriter<'a> {
-    /// Returns a populated portion of the to slice
+    /// Returns a populated portion of the slice
     fn as_ref(&self) -> &[u8] {
         &self.buf[..self.len]
     }
 }
 
 impl<'a> AsMut<[u8]> for SliceWriter<'a> {
-    /// Returns a populated portion of the to slice
+    /// Returns a populated portion of the slice
     fn as_mut(&mut self) -> &mut [u8] {
         &mut self.buf[..self.len]
     }
@@ -117,7 +105,15 @@ impl<'a> SliceWriter<'a> {
     pub fn rem_capacity(&self) -> usize {
         self.buf.len() - self.len
     }
-    /// Destruct into underlying buffer
+    /// Split the underlying buffer and return the portion of the populated buffer
+    /// with an underlying buffer's borrowed lifetime.
+    ///
+    /// Once a SliceWriter is dropped the slice stays borrowed as long as an original container lives.
+    pub fn split(self) -> (&'a mut[u8], Self) {
+        let (res, buf) = self.buf.split_at_mut(self.len);
+        (res, Self { buf, len: 0 })
+    }
+    /// Destruct into an underlying buffer
     pub fn into_buf(self) -> &'a mut [u8] {
         self.buf
     }
@@ -150,6 +146,8 @@ mod tests {
         writer.write_str("Good Bye!").unwrap();
         let expected = b"Hello World! Good Bye!";
         assert_eq!(writer.as_ref(), expected);
+        let (head, mut writer) = writer.split();
+        assert_eq!(head, expected);
         assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
     }
 }

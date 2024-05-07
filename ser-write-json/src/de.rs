@@ -343,16 +343,17 @@ impl<'de, P> Deserializer<'de, P> {
         let len = self.input.len();
         let ptr = self.input.as_mut_ptr();
         let nstart = index + offs;
-        let newlen = (len).checked_sub(nstart).unwrap();
+        let newlen = len.checked_sub(nstart).unwrap();
         let index0 = self.index;
-        let reslen = (index).checked_sub(index0).unwrap();
+        let reslen = index.checked_sub(index0).unwrap();
         self.index = 0;
         // SAFETY: We just checked that `[index0..index]` and `[nstart; newlen]`
         // are not overlapping, because we checked that index0 <= index and nstart = index + offs,
         // so returning a reference is fine.
-        // unfortunately we can't use slice::split_at_mut because the returned lifetime
-        // have to be preserved
         unsafe {
+            // unfortunately we can't use slice::split_at_mut because that would create a borrow
+            // check violation, since there can't be 2 mutable references to the same memory
+            // at the same time
              self.input = from_raw_parts_mut(ptr.add(nstart), newlen);
              from_raw_parts(ptr.add(index0), reslen)
         }
