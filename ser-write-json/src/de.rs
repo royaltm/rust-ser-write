@@ -1,4 +1,5 @@
 #![allow(unused_imports)]
+use core::cell::Cell;
 use std::println;
 
 use serde::forward_to_deserialize_any;
@@ -12,9 +13,12 @@ use serde::de::{self, Visitor};
 
 /// Deserializes an instance of type `T` from a mutable slice of bytes of JSON text.
 ///
-/// The provided slice must be writable so the deserializer can unescape strings in-place.
+/// The provided slice must be writable so the deserializer can unescape strings 
+/// and parse bytes from arrays or strings in-place.
 ///
-/// Any `&str` in the returned type will contain references to the provided slice.
+/// __NOTE__: Assume the original slice content will be modified!
+///
+/// Any `&str` or `&[u8]` in the returned type will contain references to the provided slice.
 pub fn from_mut_slice<'a, T>(v: &'a mut [u8]) -> Result<T>
     where T: de::Deserialize<'a>
 {
@@ -44,48 +48,34 @@ impl From<Utf8Error> for Error {
 pub enum Error {
     /// EOF while parsing
     UnexpectedEof,
-
     /// Invalid escape sequence
     InvalidEscapeSequence,
-
     /// A control ASCII character detected in a string
     StringControlChar,
-
     /// Expected this character to be a `':'`.
     ExpectedColon,
-
     /// Expected this character to be either a `','` or a `']'`.
     ExpectedArrayCommaOrEnd,
     /// Array content starts with a leading `,`.
     LeadingArrayComma,
     /// Array content ends with a trailing `,`.
     TrailingArrayComma,
-
     /// Expected this character to be either a `','` or a `'}'`.
     ExpectedObjectCommaOrEnd,
     /// Object content starts with a leading `,`.
     LeadingObjectComma,
     /// Object content ends with a trailing `,`.
     TrailingObjectComma,
-
     /// Expected to parse either a `true`, `false`, or a `null`.
     ExpectedToken,
-
     /// Expected `null`
     ExpectedNull,
-
     /// Expected `"` character
     ExpectedString,
-
     /// Expected ']'
     ExpectedArrayEnd,
-
     /// Expected array
     ExpectedArray,
-
-    /// Expected '}'
-    ExpectedObjectEnd,
-
     /// Expected object
     ExpectedObject,
 
@@ -132,26 +122,22 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Error::UnexpectedEof => "Unexpected end of JSON input",
-            Error::InvalidEscapeSequence => "Invalid string escape sequence",
-            Error::StringControlChar => "A control ASCII character detected in a string",
-
-            Error::ExpectedArrayCommaOrEnd => "Expected a `','` or a `']'`",
-            Error::LeadingArrayComma => "Array content starts with a leading `,`",
-            Error::TrailingArrayComma => "Array content ends with a trailing `,`",
-
-            Error::ExpectedObjectCommaOrEnd => "Expected this character to be either a `','` or a `'}'`.",
-            Error::LeadingObjectComma => "Object content starts with a leading `,`",
-            Error::TrailingObjectComma => "Object content ends with a trailing `,`",
-
-            Error::ExpectedColon => "Expected this character to be a `':'`.",
+            Error::InvalidEscapeSequence => "Invalid JSON string escape sequence",
+            Error::StringControlChar => "A control ASCII character found in a JSON string",
+            Error::ExpectedArrayCommaOrEnd => "Expected `','` or `']'`",
+            Error::LeadingArrayComma => "JSON array content starts with a leading `,`",
+            Error::TrailingArrayComma => "JSON array content ends with a trailing `,`",
+            Error::ExpectedObjectCommaOrEnd => "Expected `','` or `'}'`",
+            Error::LeadingObjectComma => "JSON object content starts with a leading `,`",
+            Error::TrailingObjectComma => "JSON object content ends with a trailing `,`",
+            Error::ExpectedColon => "Expected `':'`",
             Error::ExpectedToken => {
-                "Expected to parse either a `true`, `false`, or a `null`."
+                "Expected either `true`, `false`, or `null`."
             }
             Error::ExpectedNull => "Expected `null`",
-            Error::ExpectedString => r#"Expected `"` character"#,
+            Error::ExpectedString => r#"Expected `"`"#,
             Error::ExpectedArrayEnd => "Expected ']'",
             Error::ExpectedArray => "Expeced a JSON array",
-            Error::ExpectedObjectEnd => "Expected '}'",
             Error::ExpectedObject => "Expected a JSON object",
             Error::ExpectedEnumValue => "Expected this character to start a JSON value",
             Error::ExpectedEnumObjectEnd => "Expected this character to be `'}'`",
@@ -282,6 +268,7 @@ impl<'de> Deserializer<'de> {
 
     /// Consume deserializer and check if trailing characters only consist of whitespace
     fn end(mut self) -> Result<()> {
+        // println!("end: {}", core::str::from_utf8(&self.input[self.index..]).unwrap());
         self.eat_whitespace().err()
         .map(|_| ())
         .ok_or_else(|| Error::TrailingCharacters)
@@ -299,24 +286,24 @@ impl<'de> Deserializer<'de> {
         .ok_or_else(|| Error::UnexpectedEof)
     }
 
-    /// Splits the underlying slice at `index + offs` to uphold the safety contract
+    /// Splits the input slice at `index + offs` to uphold the mutability borrow contract
     /// and returns the slice between `self.index..index`
-    fn get_some(&mut self, index: usize, offs: usize) -> &'de[u8] where {
+    fn split_some(&mut self, index: usize, offs: usize) -> &'de[u8] {
         let len = self.input.len();
         let ptr = self.input.as_mut_ptr();
+        let nstart = index + offs;
+        let newlen = (len).checked_sub(nstart).unwrap();
         let index0 = self.index;
-        let start = index + offs;
-        let cutlen = (index).checked_sub(index0).expect("index sanity");
-        let newlen = (len).checked_sub(start).expect("index sanity");
+        let reslen = (index).checked_sub(index0).unwrap();
         self.index = 0;
-        // SAFETY: We just checked that `[index0..index]` and `[start; newlen]`
-        // are not overlapping, because we checked that index0 <= index and start = index + offs,
+        // SAFETY: We just checked that `[index0..index]` and `[nstart; newlen]`
+        // are not overlapping, because we checked that index0 <= index and nstart = index + offs,
         // so returning a reference is fine.
         // unfortunately we can't use slice::split_at_mut because the returned lifetime
         // have to be preserved
         unsafe {
-             self.input = from_raw_parts_mut(ptr.add(start), newlen);
-             from_raw_parts(ptr.add(index0), cutlen)
+             self.input = from_raw_parts_mut(ptr.add(nstart), newlen);
+             from_raw_parts(ptr.add(index0), reslen)
         }
     }
 
@@ -437,13 +424,16 @@ impl<'de> Deserializer<'de> {
         }
     }
 
+    /// Return a position of a first non-number member character
     #[inline]
-    fn match_float(&mut self) -> Option<usize> {
-        self.input[self.index..].iter()
+    fn match_float(&mut self) -> usize {
+        let input = &self.input[self.index..];
+        input.iter()
         .position(|&b| !matches!(b, b'0'..=b'9'|b'+'|b'-'|b'.'|b'e'|b'E'))
+        .unwrap_or_else(|| input.len())
     }
 
-    /// Eats whitespace and then ignores a number
+    /// Eats whitespace and then ignores subsequent number characters
     #[inline]
     fn eat_number(&mut self) -> Result<()> {
         // println!("eat num: {}", core::str::from_utf8(&self.input[self.index..]).unwrap());
@@ -451,11 +441,9 @@ impl<'de> Deserializer<'de> {
             self.eat_some(1);
             self.parse_token_content(b"ull")?;
         }
-        else if let Some(pos) = self.match_float() {
-            self.eat_some(pos);
-        }
         else {
-            self.index = self.input.len();
+            let pos = self.match_float();
+            self.eat_some(pos);
         }
         Ok(())
     }
@@ -468,15 +456,9 @@ impl<'de> Deserializer<'de> {
             self.parse_token_content(b"ull")?;
             return Ok(None)
         }
-        let input = {
-            if let Some(pos) = self.match_float() {
-                &self.input[self.index..self.index + pos]
-            }
-            else {
-                &self.input[self.index..]
-            }
-        };
-        // Note(unsafe): We already checked that it only contains ascii. This is only true if the
+        let pos = self.match_float();
+        let input = &self.input[self.index..self.index + pos];
+        // SAFETY: We already checked that it only contains ascii. This is only true if the
         // caller has guaranteed that `pattern` contains only ascii characters.
         let s = unsafe { str::from_utf8_unchecked(input) };
         let v = F::from_str(s).map_err(|_| Error::InvalidNumber)?;
@@ -535,6 +517,7 @@ impl<'de> Deserializer<'de> {
         loop {
             // "....{dest}<-{gap}->{index}{start}..{end}..."
             if let Some(found) = self.input.get(start..).and_then(|slice|
+                // println!("slice: {:?} {}", slice, core::str::from_utf8(&self.input[start..]).unwrap());
                 /* search for either '\', '"' or a control character */
                 slice.iter().position(|&b| matches!(b, RS|QU) || b <= 0x1F))
             {
@@ -546,7 +529,7 @@ impl<'de> Deserializer<'de> {
                 match self.input[end] {
                     QU => { /* '"' found */
                         /* return as str and eat a gap with a closing '"' */
-                        break Ok(core::str::from_utf8(self.get_some(end - gap, gap + 1))?)
+                        break Ok(core::str::from_utf8(self.split_some(end - gap, gap + 1))?)
                     }
                     RS => { /* '\' found */
                         dest += end - index;
@@ -589,6 +572,78 @@ impl<'de> Deserializer<'de> {
                 break Err(Error::UnexpectedEof)
             }
         }
+    }
+
+    fn parse_hex_bytes_content(&mut self) -> Result<&'de[u8]> {
+        let input = self.input.get_mut(self.index..).ok_or_else(|| Error::UnexpectedEof)?;
+        let cells = Cell::from_mut(input).as_slice_of_cells();
+        let mut src = cells.chunks_exact(2);
+        let mut len = 0;
+        let mut iter = src.by_ref().zip(cells.into_iter());
+        while let Some(([a, b], t)) = iter.next() {
+            if let Some(n) = parse_hex_nib(a.get()) {
+                if let Some(m) = parse_hex_nib(b.get()) {
+                    t.set((n << 4) + m);
+                }
+                else {
+                    return Err(Error::UnexpectedChar)
+                }
+            }
+            else if a.get() == QU {
+                return Ok(self.split_some(self.index + len, len + 1))
+            }
+            else {
+                return Err(Error::UnexpectedChar)
+            }
+            len = len + 1;
+        }
+        if let [c] = src.remainder() {
+            if c.get() == QU {
+                return Ok(self.split_some(self.index + len, len + 1))
+            }
+        }
+        Err(Error::UnexpectedChar)
+    }
+
+    fn parse_array_bytes_content(&mut self) -> Result<&'de[u8]> {
+        if b']' == self.eat_whitespace()? {
+            return Ok(self.split_some(self.index, 1))
+        }
+        let start = self.index;
+        let mut index = start;
+        #[allow(unused_variables)]
+        let input = {
+            #[cfg(debug_assertions)]
+            {
+                ()
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                self.input.as_mut_ptr()
+            }
+        };
+        loop {
+            let byte = self.parse_unsigned()?;
+            #[cfg(debug_assertions)]
+            {
+                self.input[index] = byte;
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                // SAFETY: depends on parse_unsigned to validate if there is enough room in input
+                // any number in ASCII is >= byte
+                unsafe { input.add(index).write(byte); }
+            }
+            index += 1;
+            match self.eat_whitespace()? {
+                b',' => self.eat_some(1),
+                b']' => break,
+                _ => return Err(Error::UnexpectedChar)
+            }
+        }
+        let offs = self.index + 1 - index;
+        self.index = start;
+        Ok(self.split_some(index, offs))
     }
 }
 
@@ -724,16 +779,27 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         self.deserialize_str(visitor)
     }
 
-    fn deserialize_bytes<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value>
         where V: Visitor<'de>
     {
-        unimplemented!()
+        let bytes = match self.eat_whitespace()? {
+            b'"' => {
+                self.eat_some(1);
+                self.parse_hex_bytes_content()?
+            }
+            b'[' => {
+                self.eat_some(1);
+                self.parse_array_bytes_content()?
+            }
+            _ => return Err(Error::UnexpectedChar)
+        };
+        visitor.visit_borrowed_bytes(bytes)
     }
 
-    fn deserialize_byte_buf<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value>
         where V: Visitor<'de>
     {
-        unimplemented!()
+        self.deserialize_bytes(visitor)
     }
 
     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value>
@@ -829,7 +895,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
                 self.eat_some(1);
                 Ok(value)
             } else {
-                Err(Error::ExpectedObjectEnd)
+                Err(Error::ExpectedObjectCommaOrEnd)
             }
         } else {
             Err(Error::ExpectedObject)
@@ -1099,6 +1165,7 @@ impl<'a, 'de> de::VariantAccess<'de> for VariantAccess<'a, 'de> {
 
 #[cfg(test)]
 mod tests {
+    use std::{vec, vec::Vec};
     use serde::Deserialize;
     use super::*;
 
@@ -1129,11 +1196,16 @@ mod tests {
         assert_eq!(deser.parse_str_content().unwrap(), "Hello World!");
         assert!(deser.input.is_empty());
         assert_eq!(deser.index, 0);
+
+        let mut test = [0;2];
+        test.copy_from_slice(b"\n\"");
+        let mut deser = Deserializer::from_mut_slice(&mut test);
+        assert_eq!(deser.parse_str_content(), Err(Error::StringControlChar));
     }
 
     #[test]
     fn test_deserializer() {
-        let mut test = std::vec::Vec::new();
+        let mut test = Vec::new();
         let s: &str = {
             test.clear();
             test.extend_from_slice(br#""Hello World!""#);
@@ -1160,6 +1232,137 @@ mod tests {
         assert_eq!(ary, ["one1", "2two", "333"]);
     }
 
+    #[test]
+    fn test_de_bytes() {
+        use serde::Serialize;
+
+        let mut vec = Vec::new();
+        vec.extend_from_slice(b"[]");
+        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        assert_eq!(bytes, []);
+
+        vec.clear(); vec.extend_from_slice(br#""""#);
+        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        assert_eq!(bytes, []);
+
+        vec.clear(); vec.extend_from_slice(b"[0]");
+        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        assert_eq!(bytes, [0]);
+
+        vec.clear(); vec.extend_from_slice(br#""FF""#);
+        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        assert_eq!(bytes, [255]);
+
+        vec.clear(); vec.extend_from_slice(b"");
+        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        vec.clear(); vec.extend_from_slice(br#"""#);
+        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        vec.clear(); vec.extend_from_slice(br#""0""#);
+        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        vec.clear(); vec.extend_from_slice(br#""ABC""#);
+        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        vec.clear(); vec.extend_from_slice(br#""Xy""#);
+        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        vec.clear(); vec.extend_from_slice(b"[");
+        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        vec.clear(); vec.extend_from_slice(b"[-1]");
+        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        vec.clear(); vec.extend_from_slice(b"[256]");
+        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        vec.clear(); vec.extend_from_slice(b"[,]");
+        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+        vec.clear(); vec.extend_from_slice(b"[0,]");
+        assert!(from_mut_slice::<&[u8]>(&mut vec).is_err());
+
+        #[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
+        #[serde(default)]
+        struct Test<'a> {
+            #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none")]
+            owned: Option<Vec<u8>>,
+            #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none")]
+            borrowed: Option<&'a[u8]>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            tail: Option<bool>,
+        }
+
+        vec.clear();
+        let mut test = Test { owned: Some(vec![0,10,11,12,13,14,15,16,17,18,19,255]), ..Test::default() };
+        let expected = br#"{"owned":[0,10,11,12,13,14,15,16,17,18,19,255]}"#;
+        crate::to_writer(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
+        assert_eq!(from_mut_slice::<Test>(&mut vec).unwrap(), test);
+
+        vec.clear();
+        vec.extend_from_slice(br#" { "owned" : [  255, 127, 128, 0  ] } "#);
+        assert_eq!(
+            from_mut_slice::<Test>(&mut vec).unwrap(),
+            Test { owned: Some(vec![255,127,128,0]), ..Test::default() }
+        );
+
+        vec.clear();
+        test.tail = Some(false);
+        let expected = br#"{"owned":"000A0B0C0D0E0F10111213FF","tail":false}"#;
+        crate::to_writer_hex_bytes(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
+        assert_eq!(from_mut_slice::<Test>(&mut vec).unwrap(), test);
+
+        vec.clear();
+        vec.extend_from_slice(br#" { "tail" :true ,"owned": "DEADBACA9970" } "#);
+        assert_eq!(
+            from_mut_slice::<Test>(&mut vec).unwrap(),
+            Test { tail: Some(true), owned: Some(vec![0xde,0xad,0xba,0xca,0x99,0x70]), ..Test::default() }
+        );
+
+        vec.clear();
+        let mut test = Test { borrowed: Some(&[0,10,11,12,13,14,15,16,17,18,19,255]), ..Test::default() };
+        let expected = br#"{"borrowed":[0,10,11,12,13,14,15,16,17,18,19,255]}"#;
+        crate::to_writer(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
+        assert_eq!(from_mut_slice::<Test>(&mut vec).unwrap(), test);
+
+        vec.clear();
+        vec.extend_from_slice(br#" { "borrowed" : [  255, 127, 128, 0  ] ,"tail"  :false}"#);
+        assert_eq!(
+            from_mut_slice::<Test>(&mut vec).unwrap(),
+            Test { borrowed: Some(&[255,127,128,0]), tail: Some(false), ..Test::default() }
+        );
+
+        vec.clear();
+        vec.extend_from_slice(br#" { "borrowed" : "DEADBACA9970" ,"tail"  :null, "owned":null } "#);
+        assert_eq!(
+            from_mut_slice::<Test>(&mut vec).unwrap(),
+            Test { borrowed: Some(&[0xde,0xad,0xba,0xca,0x99,0x70]), ..Test::default() }
+        );
+
+        vec.clear();
+        test.tail = Some(true);
+        let expected = br#"{"borrowed":"000A0B0C0D0E0F10111213FF","tail":true}"#;
+        crate::to_writer_hex_bytes(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
+        assert_eq!(from_mut_slice::<Test>(&mut vec).unwrap(), test);
+
+        vec.clear();
+        vec.extend_from_slice(br#" { "borrowed": [  ] , "tail" :  false ,  "owned"   :  "" }  "#);
+        assert_eq!(
+            from_mut_slice::<Test>(&mut vec).unwrap(),
+            Test { borrowed: Some(&[]), tail: Some(false), owned: Some(vec![]) }
+        );
+
+        vec.clear();
+        vec.extend_from_slice(br#"{"tail":null,"owned":[],"borrowed":""}"#);
+        assert_eq!(
+            from_mut_slice::<Test>(&mut vec).unwrap(),
+            Test { borrowed: Some(&[]), tail: None, owned: Some(vec![]) }
+        );
+
+        vec.clear();
+        vec.extend_from_slice(br#" {   }  "#);
+        assert_eq!(
+            from_mut_slice::<Test>(&mut vec).unwrap(),
+            Test::default()
+        );
+    }
+
     #[derive(Debug, Deserialize, PartialEq)]
     enum Type {
         #[serde(rename = "boolean")]
@@ -1173,13 +1376,13 @@ mod tests {
     fn from_str<T>(s: &str) -> Result<(T, usize)>
         where for<'a> T: de::Deserialize<'a>
     {
-        let mut vec = std::vec::Vec::with_capacity(s.len());
+        let mut vec = Vec::with_capacity(s.len());
         vec.extend_from_slice(s.as_bytes());
         let res: T = from_mut_slice(&mut vec)?;
         Ok((res, s.len()))
     }
 
-    fn from_bufstr<'a, T>(buf: &'a mut std::vec::Vec<u8>, s: &str) -> Result<(T, usize)>
+    fn from_bufstr<'a, T>(buf: &'a mut Vec<u8>, s: &str) -> Result<(T, usize)>
         where T: de::Deserialize<'a>
     {
         buf.clear();
@@ -1194,8 +1397,10 @@ mod tests {
         assert_eq!(from_str("[0, 1, 2]"), Ok(([0, 1, 2], 9)));
 
         // errors
+        assert_eq!(from_str::<[i32; 2]>("{}"), Err(Error::ExpectedArray));
         assert_eq!(from_str::<[i32; 2]>("[0, 1,]"), Err(Error::ExpectedArrayEnd));
         assert_eq!(from_str::<[i32; 3]>("[0, 1,]"), Err(Error::TrailingArrayComma));
+        assert_eq!(from_str::<[i32; 2]>("[,]"), Err(Error::LeadingArrayComma));
         assert_eq!(from_str::<[i32; 2]>("[, 0]"), Err(Error::LeadingArrayComma));
     }
 
@@ -1255,11 +1460,15 @@ mod tests {
         assert_eq!(from_str(r#" "boolean" "#), Ok((Type::Boolean, 11)));
         assert_eq!(from_str(r#" "number" "#), Ok((Type::Number, 10)));
         assert_eq!(from_str(r#" "thing" "#), Ok((Type::Thing, 9)));
+        assert_eq!(from_str::<Type>(r#" "" "#), Err(Error::CustomError));
+        assert_eq!(from_str::<Type>(r#" "xyz" "#), Err(Error::CustomError));
+        assert_eq!(from_str::<Type>(r#" {} "#), Err(Error::ExpectedString));
+        assert_eq!(from_str::<Type>(r#" [] "#), Err(Error::ExpectedEnumValue));
     }
 
     #[test]
     fn test_de_str() {
-        let buf = &mut std::vec::Vec::new();
+        let buf = &mut Vec::new();
         assert_eq!(from_bufstr(buf, r#" "hello" "#), Ok(("hello", 9)));
         assert_eq!(from_bufstr(buf, r#" "" "#), Ok(("", 4)));
         assert_eq!(from_bufstr(buf, r#" " " "#), Ok((" ", 5)));
@@ -1305,6 +1514,28 @@ mod tests {
         assert_eq!(from_bufstr::<&str>(buf, r#" "\u000" "#), Err(Error::InvalidEscapeSequence));
         assert_eq!(from_bufstr::<&str>(buf, r#" "\uD800" "#), Err(Error::InvalidUnicodeCodePoint));
         assert_eq!(from_bufstr::<&str>(buf, r#" "\uDFFF" "#), Err(Error::InvalidUnicodeCodePoint));
+    }
+
+    #[test]
+    fn test_de_struct() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Test {
+            foo: i8,
+        }
+        assert_eq!(
+            from_str(r#"{ "foo": 0 }"#),
+            Ok((Test { foo: 0 }, 12))
+        );
+        assert_eq!(
+            from_str(r#"{"foo":-1}"#),
+            Ok((Test {foo:-1}, 10))
+        );
+        // errors
+        assert_eq!(from_str::<Test>("[]"), Err(Error::ExpectedObject));
+        assert_eq!(from_str::<Test>(r#"{"foo":0]"#), Err(Error::ExpectedObjectCommaOrEnd));
+        assert_eq!(from_str::<Test>(r#"{"foo":0,}"#), Err(Error::TrailingObjectComma));
+        assert_eq!(from_str::<Test>(r#"{,}"#), Err(Error::LeadingObjectComma));
+        assert_eq!(from_str::<Test>(r#"{,"foo":0}"#), Err(Error::LeadingObjectComma));
     }
 
     #[test]
@@ -1416,7 +1647,7 @@ mod tests {
             description: Option<&'a str>,
         }
 
-        let buf = &mut std::vec::Vec::new();
+        let buf = &mut Vec::new();
 
         assert_eq!(
             from_bufstr(buf, r#"{ "description": "An ambient temperature sensor" }"#),
@@ -1644,7 +1875,7 @@ mod tests {
             href: &'a str,
         }
 
-        let buf = &mut std::vec::Vec::new();
+        let buf = &mut Vec::new();
 
         assert_eq!(
             from_bufstr::<Thing<'_>>(buf,

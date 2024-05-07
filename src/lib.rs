@@ -86,14 +86,24 @@ pub struct SliceWriter<'a> {
     pub len: usize
 }
 
+impl<'a> AsRef<[u8]> for SliceWriter<'a> {
+    /// Returns a populated portion of the to slice
+    fn as_ref(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+impl<'a> AsMut<[u8]> for SliceWriter<'a> {
+    /// Returns a populated portion of the to slice
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.buf[..self.len]
+    }
+}
+
 impl<'a> SliceWriter<'a> {
     /// Create new instance
     pub fn new(buf: &'a mut [u8]) -> Self {
         SliceWriter { buf, len: 0 }
-    }
-    /// Return populated slice chunk
-    pub fn view(&self) -> &[u8] {
-        &self.buf[..self.len]
     }
     /// Return populated length
     pub fn len(&self) -> usize {
@@ -139,7 +149,7 @@ mod tests {
         writer.write_byte(b' ').unwrap();
         writer.write_str("Good Bye!").unwrap();
         let expected = b"Hello World! Good Bye!";
-        assert_eq!(writer.view(), expected);
+        assert_eq!(writer.as_ref(), expected);
         assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
     }
 }

@@ -806,8 +806,6 @@ mod tests {
             Number,
         }
 
-        // let buf = &mut Vec::new();
-
         assert_eq!(
             &*to_string(&Type::Boolean).unwrap(),
             r#""boolean""#
