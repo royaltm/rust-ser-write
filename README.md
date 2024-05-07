@@ -1,7 +1,11 @@
-ser-write
-=========
+serde-rw
+========
 
-Streaming-style serde serializers for embedded (no-std) and more.
+Streaming-style serde serializers and deserializers for embedded (no-std) and more.
+
+* No cutting corners, implement as much as possible
+* Fully support `std` and `alloc` for code portability
+* Fully support `no-std` as much as possible for code portability
 
 In most cases for the Rust `std` you should probably use:
 

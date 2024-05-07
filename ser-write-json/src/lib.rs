@@ -9,4 +9,6 @@ extern crate std;
 extern crate alloc;
 
 pub mod ser;
+pub mod de;
 pub use ser::*;
+pub use de::*;

@@ -25,10 +25,11 @@ pub enum SerError {
     SeqLength,
     /// Serializer could not determine string size
     StrLength,
+    /// Not covered by the above cases
+    OtherError,
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for SerError {}
+impl serde::de::StdError for SerError {}
 
 impl fmt::Display for SerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -36,7 +37,8 @@ impl fmt::Display for SerError {
             SerError::BufferFull => f.write_str("buffer is full"),
             SerError::MapLength => f.write_str("unknown or invalid map length"),
             SerError::SeqLength => f.write_str("unknown or invalid sequence length"),
-            SerError::StrLength => f.write_str("invalid string length")
+            SerError::StrLength => f.write_str("invalid string length"),
+            SerError::OtherError => f.write_str("other serialize error")
         }
     }
 }
