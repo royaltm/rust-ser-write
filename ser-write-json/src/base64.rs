@@ -4,9 +4,9 @@ use crate::SerWrite;
 
 static ALPHABET: &[u8;64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/// Encode an array of bytes as base-64 ASCII armour codes into a [`SerWrite`] implementing object.
+/// Encode an array of bytes as BASE-64 ASCII armour codes into a [`SerWrite`] implementing object.
 ///
-/// _Note_: This function does not append base-64 '=' padding characters by itself
+/// _Note_: This function does not append BASE-64 '=' padding characters by itself
 /// and instead returns the number of padding characters required: 0-2.
 pub fn encode<W: SerWrite>(ser: &mut W, bytes: &[u8]) -> Result<u8, W::Error> {
     let mut chunks = bytes.chunks_exact(3);
@@ -96,7 +96,7 @@ fn get_code(c: u8) -> Option<u8> {
 //                       101110
 //   01010011 01110101 01101110
 //
-//                            1 (none) (31)
+//                            1 (0) (31)
 //                      1010100 (1) (25)
 //                   1 01010000 (1) (25)(<<2)
 //               10101 00110111 (2) (19)
@@ -104,24 +104,26 @@ fn get_code(c: u8) -> Option<u8> {
 //        101 01001101 11010101 (3) (13)
 // 1 01010011 01110101 01000000 (3) (13)(<<6)
 // 1 01010011 01110101 01101110 (4) (7)
-
-/// Decode a base-64 encoded slice of byte characters in-place until a first
+#[inline(always)]
+fn decode_cell(acc: u32, cell: &Cell<u8>) -> core::result::Result<u32, u32> {
+    match get_code(cell.get()) {
+        Some(code) => Ok((acc << 6) | u32::from(code)),
+        None => Err(acc)
+    }
+}
+/// Decode a BASE-64 encoded slice of byte characters in-place until a first
 /// invalid character is found or until the end of the slice.
 ///
 /// Return a tuple of: (decoded_len, encoded_len).
+///
+/// `decoded_len <= encoded_len <= slice.len()`
 pub fn decode(slice: &mut[u8]) -> (usize, usize) {
     let cells = Cell::from_mut(slice).as_slice_of_cells();
     let mut chunks = cells.chunks_exact(4);
     let mut dest = cells.into_iter();
     let mut dcount: usize = 0;
     for slice in chunks.by_ref() {
-        match slice.into_iter().try_fold(1u32, |acc, cell| {
-                match get_code(cell.get()) {
-                    Some(code) => Ok((acc << 6) | u32::from(code)),
-                    None => Err(acc)
-                }
-            })
-        {
+        match slice.iter().try_fold(1, decode_cell) {
             Ok(packed) => {
                 // SAFETY: dest and chunks iterate over the same cells slice,
                 // while for every 4 byte chunk only 3 dest bytes are consumed,
@@ -136,14 +138,7 @@ pub fn decode(slice: &mut[u8]) -> (usize, usize) {
             Err(packed) => return handle_tail(dcount, packed, dest)
         }
     }
-    let rem = chunks.remainder();
-    match rem.into_iter().try_fold(1u32, |acc, cell| {
-            match get_code(cell.get()) {
-                Some(code) => Ok((acc << 6) | u32::from(code)),
-                None => Err(acc)
-            }
-        })
-    {
+    match chunks.remainder().iter().try_fold(1, decode_cell) {
         /* no tail */
         Ok(1) => (dcount, dcount * 4 / 3),
         /* some tail */
@@ -229,7 +224,12 @@ mod tests {
             }
             assert_eq!(decode(vec.as_mut_slice()), expected);
             assert_eq!(&vec[..expected.0], decoded);
-            assert_eq!(vec[expected.1], b'=');
+            if i == 0 {
+                assert_eq!(vec.len(), expected.1);
+            }
+            else {
+                assert_eq!(vec[expected.1], b'=');
+            }
         }
     }
 

@@ -10,6 +10,8 @@ use super::*;
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
 impl SerWrite for Vec<u8> {
+    type Error = SerError;
+
     #[inline]
     fn write(&mut self, buf: &[u8]) -> SerResult<()> {
         self.extend_from_slice(buf);
@@ -25,6 +27,8 @@ impl SerWrite for Vec<u8> {
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
 impl SerWrite for VecDeque<u8> {
+    type Error = SerError;
+
     #[inline]
     fn write(&mut self, buf: &[u8]) -> SerResult<()> {
         self.extend(buf.into_iter().copied());
@@ -42,6 +46,8 @@ impl SerWrite for VecDeque<u8> {
 impl<T> SerWrite for Cursor<T>
     where Cursor<T>: std::io::Write
 {
+    type Error = SerError;
+
     #[inline]
     fn write(&mut self, buf: &[u8]) -> SerResult<()> {
         std::io::Write::write_all(self, buf).map_err(|_| SerError::BufferFull)
@@ -51,6 +57,8 @@ impl<T> SerWrite for Cursor<T>
 #[cfg(feature = "arrayvec")]
 #[cfg_attr(docsrs, doc(cfg(feature = "arrayvec")))]
 impl<const CAP: usize> SerWrite for arrayvec::ArrayVec<u8, CAP> {
+    type Error = SerError;
+
     fn write(&mut self, buf: &[u8]) -> SerResult<()> {
         self.try_extend_from_slice(buf).map_err(|_| SerError::BufferFull)
     }
@@ -63,6 +71,8 @@ impl<const CAP: usize> SerWrite for arrayvec::ArrayVec<u8, CAP> {
 #[cfg(feature = "heapless")]
 #[cfg_attr(docsrs, doc(cfg(feature = "heapless")))]
 impl<const CAP: usize> SerWrite for heapless::Vec<u8, CAP> {
+    type Error = SerError;
+
     fn write(&mut self, buf: &[u8]) -> SerResult<()> {
         self.extend_from_slice(buf).map_err(|_| SerError::BufferFull)
     }

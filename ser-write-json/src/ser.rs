@@ -14,13 +14,13 @@ use serde::{ser, Serialize};
 pub use crate::{SerWrite, SerError};
 
 /// JSON serializer serializing bytes to an array of numbers
-pub type SerializerByteArray<W> = Serializer<W, ArrayByteFormatter>;
+pub type SerializerByteArray<W> = Serializer<W, ArrayByteEncoder>;
 /// JSON serializer serializing bytes to a hexadecimal string
-pub type SerializerByteHexStr<W> = Serializer<W, HexStrByteFormatter>;
+pub type SerializerByteHexStr<W> = Serializer<W, HexStrByteEncoder>;
 /// JSON serializer serializing bytes to a base-64 string
-pub type SerializerByteBase64<W> = Serializer<W, Base64ByteFormatter>;
+pub type SerializerByteBase64<W> = Serializer<W, Base64ByteEncoder>;
 /// JSON serializer passing bytes through
-pub type SerializerBytePass<W> = Serializer<W, PassThroughByteFormatter>;
+pub type SerializerBytePass<W> = Serializer<W, PassThroughByteEncoder>;
 
 pub struct Serializer<W, B> {
     first: bool,
@@ -28,72 +28,93 @@ pub struct Serializer<W, B> {
     format: PhantomData<B>
 }
 
-/// An error returned by [`SerWrite`] and serializers
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// An error returned by the JSON [`Serializer`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum Error {
-    /// Writer error
-    Writer(SerError),
-    /// Undetermined map length or too many items
-    MapLength,
-    /// Undetermined sequence length or too many items
-    SeqLength,
-    /// Serializer could not determine string size
-    StrLength,
-    /// Error encoding utf-8 string
+pub enum Error<E> {
+    /// Underlying writer error
+    Writer(E),
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    /// Error encoding utf-8 string with pass-through bytes encoder
     Utf8Encode,
+    /// Error formatting a collected a string
+    FormatError,
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    /// An error passed down from a [`serde::ser::Serialize`] implementation
+    SerializeError(std::string::String),
+    #[cfg(not(any(feature = "std", feature = "alloc")))]
+    SerializeError
 }
 
-pub type Result<T> = core::result::Result<T, Error>;
+pub type Result<T, E> = core::result::Result<T, Error<E>>;
 
-impl serde::de::StdError for Error {}
+impl<E: fmt::Display+fmt::Debug> serde::de::StdError for Error<E> {}
 
-impl fmt::Display for Error
+impl<E: fmt::Display> fmt::Display for Error<E>
     where SerError: fmt::Display
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Writer(err) => err.fmt(f),
-            Error::MapLength => f.write_str("unknown or invalid map length"),
-            Error::SeqLength => f.write_str("unknown or invalid sequence length"),
-            Error::StrLength => f.write_str("invalid string length"),
-            Error::Utf8Encode => f.write_str("error encoding JSON as UTF-8 string")
+            #[cfg(any(feature = "std", feature = "alloc"))]
+            Error::Utf8Encode => f.write_str("error encoding JSON as UTF-8 string"),
+            Error::FormatError => f.write_str("error while collecting a string"),
+            #[cfg(any(feature = "std", feature = "alloc"))]
+            Error::SerializeError(s) => write!(f, "{} while serializing JSON", s),
+            #[cfg(not(any(feature = "std", feature = "alloc")))]
+            Error::SerializeError => f.write_str("custom error while serializing JSON"),
         }
     }
 }
 
-impl serde::ser::Error for Error {
-    fn custom<T>(_msg: T) -> Self
+#[cfg(any(feature = "std", feature = "alloc"))]
+impl<E: fmt::Display+fmt::Debug> serde::ser::Error for Error<E> {
+    fn custom<T>(msg: T) -> Self
         where T: fmt::Display
     {
-        unreachable!()
+        use crate::std::string::ToString;
+        Error::SerializeError(msg.to_string())
     }
 }
 
-impl From<SerError> for Error {
-    fn from(err: SerError) -> Self {
+#[cfg(not(any(feature = "std", feature = "alloc")))]
+impl<E: fmt::Display+fmt::Debug> serde::ser::Error for Error<E> {
+    fn custom<T>(_msg: T) -> Self
+        where T: fmt::Display
+    {
+        Error::SerializeError
+    }
+}
+
+impl<E> From<E> for Error<E> {
+    fn from(err: E) -> Self {
         Error::Writer(err)
     }
 }
 
-/// Provides `serialize_bytes` implementation
-pub trait BytesFormat: Sized {
-    fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<()>
-        where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error>;
+/// Implementing objects Provides `serialize_bytes` function
+pub trait ByteEncoder: Sized {
+    fn serialize_bytes<'a, W: SerWrite>(
+        ser: &'a mut Serializer<W, Self>,
+        v: &[u8]
+    ) -> Result<(), W::Error>
+    where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error<W::Error>>;
 }
 
-/// Implements [`BytesFormat::serialize_bytes`] serializing to an array of numbers
-pub struct ArrayByteFormatter;
-/// Implements [`BytesFormat::serialize_bytes`] serializing to a hexadecimal string
-pub struct HexStrByteFormatter;
-/// Implements [`BytesFormat::serialize_bytes`] serializing to a base-64 string
-pub struct Base64ByteFormatter;
-/// Implements [`BytesFormat::serialize_bytes`] passing bytes through
-pub struct PassThroughByteFormatter;
+/// Implements [`ByteEncoder::serialize_bytes`] serializing to an array of numbers
+pub struct ArrayByteEncoder;
+/// Implements [`ByteEncoder::serialize_bytes`] serializing to a hexadecimal string
+pub struct HexStrByteEncoder;
+/// Implements [`ByteEncoder::serialize_bytes`] serializing to a base-64 string
+pub struct Base64ByteEncoder;
+/// Implements [`ByteEncoder::serialize_bytes`] passing bytes through
+pub struct PassThroughByteEncoder;
 
-impl BytesFormat for ArrayByteFormatter {
-    fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<()>
-        where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error>
+impl ByteEncoder for ArrayByteEncoder {
+    fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<(), W::Error>
+        where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error<W::Error>>
     {
         use serde::ser::{Serializer, SerializeSeq};
         let mut seq = ser.serialize_seq(Some(v.len()))?;
@@ -104,39 +125,37 @@ impl BytesFormat for ArrayByteFormatter {
     }
 }
 
-impl BytesFormat for HexStrByteFormatter {
-    fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<()>
-        where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error>
+impl ByteEncoder for HexStrByteEncoder {
+    fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<(), W::Error>
+        where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error<W::Error>>
     {
-        ser.output.write_byte(b'"')?;
-        for &byte in v.iter() {
-            ser.output.write(&hex(byte))?;
-        }
-        Ok(ser.output.write_byte(b'"')?)
+        ser.writer().write_byte(b'"')?;
+        ser.serialize_bytes_as_hex_str(v)?;
+        Ok(ser.writer().write_byte(b'"')?)
     }
 }
 
-impl BytesFormat for Base64ByteFormatter {
-    fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<()>
-        where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error>
+impl ByteEncoder for Base64ByteEncoder {
+    fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<(), W::Error>
+        where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error<W::Error>>
     {
-        ser.output.write_byte(b'"')?;
-        crate::base64::encode(&mut ser.output, v)?;
-        Ok(ser.output.write_byte(b'"')?)
+        ser.writer().write_byte(b'"')?;
+        crate::base64::encode(ser.writer(), v)?;
+        Ok(ser.writer().write_byte(b'"')?)
     }
 }
 
-impl BytesFormat for PassThroughByteFormatter {
-    fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<()>
-        where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error>
+impl ByteEncoder for PassThroughByteEncoder {
+    fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<(), W::Error>
+        where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error<W::Error>>
     {
-        Ok(ser.output.write(v)?)
+        Ok(ser.writer().write(v)?)
     }
 }
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-pub fn to_string<T>(value: &T) -> Result<String>
+pub fn to_string<T>(value: &T) -> Result<String, SerError>
     where T: Serialize + ?Sized
 {
     let mut vec = Vec::new();
@@ -146,7 +165,7 @@ pub fn to_string<T>(value: &T) -> Result<String>
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-pub fn to_string_hex_bytes<T>(value: &T) -> Result<String>
+pub fn to_string_hex_bytes<T>(value: &T) -> Result<String, SerError>
     where T: Serialize + ?Sized
 {
     let mut vec = Vec::new();
@@ -156,17 +175,17 @@ pub fn to_string_hex_bytes<T>(value: &T) -> Result<String>
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-pub fn to_string_base64_bytes<T>(value: &T) -> Result<String>
+pub fn to_string_base64_bytes<T>(value: &T) -> Result<String, SerError>
     where T: Serialize + ?Sized
 {
     let mut vec = Vec::new();
-    to_writer_b64_bytes(&mut vec, value)?;
+    to_writer_base64_bytes(&mut vec, value)?;
     Ok(unsafe { String::from_utf8_unchecked(vec) })
 }
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-pub fn to_string_pass_bytes<T>(value: &T) -> Result<String>
+pub fn to_string_pass_bytes<T>(value: &T) -> Result<String, SerError>
     where T: Serialize + ?Sized
 {
     let mut vec = Vec::new();
@@ -174,45 +193,60 @@ pub fn to_string_pass_bytes<T>(value: &T) -> Result<String>
     String::from_utf8(vec).map_err(|_| Error::Utf8Encode)
 }
 
+/// Serialize JSON to a SerWrite implementation using a provided `ByteEncoder`.
+pub fn to_writer_with_encoder<B, W, T>(writer: W, value: &T) -> Result<(), W::Error>
+    where B: ByteEncoder,
+          W: SerWrite,
+          <W as SerWrite>::Error: fmt::Display + fmt::Debug,
+          T: Serialize + ?Sized
+{
+    let mut serializer = Serializer::<_, B>::new(writer);
+    value.serialize(&mut serializer)
+}
+
 /// Serialize JSON to a SerWrite implementation
 ///
 /// Serialize bytes as arrays of numbers.
-pub fn to_writer<W, T>(writer: W, value: &T) -> Result<()>
-    where W: SerWrite, T: Serialize + ?Sized
+pub fn to_writer<W, T>(writer: W, value: &T) -> Result<(), W::Error>
+    where W: SerWrite,
+          <W as SerWrite>::Error: fmt::Display + fmt::Debug,
+          T: Serialize + ?Sized
 {
-    let mut serializer = SerializerByteArray::new(writer);
-    value.serialize(&mut serializer)
+    to_writer_with_encoder::<ArrayByteEncoder, _, _>(writer, value)
 }
 
 /// Serialize JSON to a SerWrite implementation
 ///
 /// Serialize bytes as hex strings.
-pub fn to_writer_hex_bytes<W, T>(writer: W, value: &T) -> Result<()>
-    where W: SerWrite, T: Serialize + ?Sized
+pub fn to_writer_hex_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
+    where W: SerWrite,
+          <W as SerWrite>::Error: fmt::Display + fmt::Debug,
+          T: Serialize + ?Sized
 {
-    let mut serializer = SerializerByteHexStr::new(writer);
-    value.serialize(&mut serializer)
+    to_writer_with_encoder::<HexStrByteEncoder, _, _>(writer, value)
 }
 
 /// Serialize JSON to a SerWrite implementation
 ///
 /// Serialize bytes as base-64 strings.
-pub fn to_writer_b64_bytes<W, T>(writer: W, value: &T) -> Result<()>
-    where W: SerWrite, T: Serialize + ?Sized
+pub fn to_writer_base64_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
+    where W: SerWrite,
+          <W as SerWrite>::Error: fmt::Display + fmt::Debug,
+          T: Serialize + ?Sized
 {
-    let mut serializer = SerializerByteBase64::new(writer);
-    value.serialize(&mut serializer)
+    to_writer_with_encoder::<Base64ByteEncoder, _, _>(writer, value)
 }
 
 /// Serialize JSON to a SerWrite implementation, passing through byte arrays
 ///
 /// Serialize bytes passing them through.
 /// The notion here is that byte arrays can hold already serialized JSON fragments.
-pub fn to_writer_pass_bytes<W, T>(writer: W, value: &T) -> Result<()>
-    where W: SerWrite, T: Serialize + ?Sized
+pub fn to_writer_pass_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
+    where W: SerWrite,
+          <W as SerWrite>::Error: fmt::Display + fmt::Debug,
+          T: Serialize + ?Sized
 {
-    let mut serializer = SerializerBytePass::new(writer);
-    value.serialize(&mut serializer)
+    to_writer_with_encoder::<PassThroughByteEncoder, _, _>(writer, value)
 }
 
 impl<W, B> Serializer<W, B> {
@@ -224,6 +258,21 @@ impl<W, B> Serializer<W, B> {
     #[inline(always)]
     pub fn into_inner(self) -> W {
         self.output
+    }
+    /// Provides access to the writer for implementors of [`ByteEncoder`].
+    #[inline(always)]
+    pub fn writer(&mut self) -> &mut W {
+        &mut self.output
+    }
+}
+
+impl<W: SerWrite, B> Serializer<W, B> {
+    pub fn serialize_bytes_as_hex_str(&mut self, v: &[u8]) -> Result<(), W::Error> {
+        let writer = self.writer();
+        for &byte in v.iter() {
+            writer.write(&hex(byte))?;
+        }
+        Ok(())
     }
 }
 
@@ -314,9 +363,11 @@ macro_rules! serialize_ryu {
     }};
 }
 
-impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, B> {
+impl<'a, W: SerWrite, B: ByteEncoder> ser::Serializer for &'a mut Serializer<W, B>
+    where <W as SerWrite>::Error: fmt::Display+fmt::Debug
+{
     type Ok = ();
-    type Error = Error;
+    type Error = Error<W::Error>;
 
     type SerializeSeq = Self;
     type SerializeTuple = Self;
@@ -326,47 +377,47 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
     type SerializeStruct = Self;
     type SerializeStructVariant = Self;
 
-    fn serialize_bool(self, v: bool) -> Result<()> {
+    fn serialize_bool(self, v: bool) -> Result<(), W::Error> {
         Ok(self.output.write(if v { b"true" } else { b"false" })?)
     }
     #[inline(always)]
-    fn serialize_i8(self, v: i8) -> Result<()> {
+    fn serialize_i8(self, v: i8) -> Result<(), W::Error> {
         self.serialize_i32(i32::from(v))
     }
     #[inline(always)]
-    fn serialize_i16(self, v: i16) -> Result<()> {
+    fn serialize_i16(self, v: i16) -> Result<(), W::Error> {
         self.serialize_i32(i32::from(v))
     }
 
-    fn serialize_i32(self, v: i32) -> Result<()> {
+    fn serialize_i32(self, v: i32) -> Result<(), W::Error> {
         // "-2147483648"
         serialize_signed!(self, 11, v, i32, u32)
     }
 
-    fn serialize_i64(self, v: i64) -> Result<()> {
+    fn serialize_i64(self, v: i64) -> Result<(), W::Error> {
         // "-9223372036854775808"
         serialize_signed!(self, 20, v, i64, u64)
     }
     #[inline(always)]
-    fn serialize_u8(self, v: u8) -> Result<()> {
+    fn serialize_u8(self, v: u8) -> Result<(), W::Error> {
         self.serialize_u32(u32::from(v))
     }
     #[inline(always)]
-    fn serialize_u16(self, v: u16) -> Result<()> {
+    fn serialize_u16(self, v: u16) -> Result<(), W::Error> {
         self.serialize_u32(u32::from(v))
     }
 
-    fn serialize_u32(self, v: u32) -> Result<Self::Ok> {
+    fn serialize_u32(self, v: u32) -> Result<Self::Ok, W::Error> {
         // "4294967295"
         serialize_unsigned!(self, 10, v)
     }
 
-    fn serialize_u64(self, v: u64) -> Result<Self::Ok> {
+    fn serialize_u64(self, v: u64) -> Result<Self::Ok, W::Error> {
         // "18446744073709551615"
         serialize_unsigned!(self, 20, v)
     }
 
-    fn serialize_f32(self, v: f32) -> Result<()> {
+    fn serialize_f32(self, v: f32) -> Result<(), W::Error> {
         if v.is_finite() {
             serialize_ryu!(self, v)
         } else {
@@ -374,7 +425,7 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
         }
     }
 
-    fn serialize_f64(self, v: f64) -> Result<()> {
+    fn serialize_f64(self, v: f64) -> Result<(), W::Error> {
         if v.is_finite() {
             serialize_ryu!(self, v)
         } else {
@@ -382,37 +433,37 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
         }
     }
 
-    fn serialize_char(self, v: char) -> Result<()> {
+    fn serialize_char(self, v: char) -> Result<(), W::Error> {
         let mut encoding_tmp = [0u8; 4];
         let encoded = v.encode_utf8(&mut encoding_tmp);
         self.serialize_str(encoded)
     }
 
-    fn serialize_str(self, v: &str) -> Result<()> {
+    fn serialize_str(self, v: &str) -> Result<(), W::Error> {
         self.output.write_byte(b'"')?;
         format_escaped_str_contents(&mut self.output, v)?;
         Ok(self.output.write_byte(b'"')?)
     }
 
-    fn serialize_bytes(self, v: &[u8]) -> Result<()> {
+    fn serialize_bytes(self, v: &[u8]) -> Result<(), W::Error> {
         B::serialize_bytes(self, v)
     }
 
-    fn serialize_none(self) -> Result<()> {
+    fn serialize_none(self) -> Result<(), W::Error> {
         Ok(self.output.write(b"null")?)
     }
 
-    fn serialize_some<T>(self, value: &T) -> Result<()>
+    fn serialize_some<T>(self, value: &T) -> Result<(), W::Error>
         where T: ?Sized + Serialize
     {
         value.serialize(self)
     }
 
-    fn serialize_unit(self) -> Result<()> {
+    fn serialize_unit(self) -> Result<(), W::Error> {
         self.serialize_none()
     }
 
-    fn serialize_unit_struct(self, _name: &'static str) -> Result<()> {
+    fn serialize_unit_struct(self, _name: &'static str) -> Result<(), W::Error> {
         self.serialize_unit()
     }
 
@@ -421,7 +472,7 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
         _name: &'static str,
         _variant_index: u32,
         variant: &'static str,
-    ) -> Result<()> {
+    ) -> Result<(), W::Error> {
         self.serialize_str(variant)
     }
 
@@ -429,7 +480,7 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
         self,
         _name: &'static str,
         value: &T,
-    ) -> Result<()>
+    ) -> Result<(), W::Error>
         where T: ?Sized + Serialize
     {
         value.serialize(self)
@@ -441,7 +492,7 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
         _variant_index: u32,
         variant: &'static str,
         value: &T,
-    ) -> Result<()>
+    ) -> Result<(), W::Error>
     where
         T: ?Sized + Serialize,
     {
@@ -452,13 +503,13 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
         Ok(self.output.write_byte(b'}')?)
     }
 
-    fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq> {
+    fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, W::Error> {
         self.output.write_byte(b'[')?;
         self.first = true;
         Ok(self)
     }
 
-    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple> {
+    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, W::Error> {
         self.serialize_seq(None)
     }
 
@@ -466,7 +517,7 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
         self,
         _name: &'static str,
         _len: usize,
-    ) -> Result<Self::SerializeTupleStruct> {
+    ) -> Result<Self::SerializeTupleStruct, W::Error> {
         self.serialize_seq(None)
     }
 
@@ -476,7 +527,7 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
         _variant_index: u32,
         variant: &'static str,
         _len: usize,
-    ) -> Result<Self::SerializeTupleVariant> {
+    ) -> Result<Self::SerializeTupleVariant, W::Error> {
         self.output.write_byte(b'{')?;
         self.serialize_str(variant)?;
         self.output.write(b":[")?;
@@ -485,7 +536,7 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
     }
 
     // Maps are represented in JSON as `{ K: V, K: V, ... }`.
-    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
+    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, W::Error> {
         self.output.write_byte(b'{')?;
         self.first = true;
         Ok(self)
@@ -495,7 +546,7 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
         self,
         _name: &'static str,
         _len: usize,
-    ) -> Result<Self::SerializeStruct> {
+    ) -> Result<Self::SerializeStruct, W::Error> {
         self.serialize_map(None)
     }
 
@@ -507,7 +558,7 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
         _variant_index: u32,
         variant: &'static str,
         _len: usize,
-    ) -> Result<Self::SerializeStructVariant> {
+    ) -> Result<Self::SerializeStructVariant, W::Error> {
         self.output.write_byte(b'{')?;
         self.serialize_str(variant)?;
         self.output.write(b":{")?;
@@ -515,12 +566,12 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::Serializer for &'a mut Serializer<W, 
         Ok(self)
     }
 
-    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok>
+    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok, W::Error>
         where T: fmt::Display
     {
         self.output.write_byte(b'"')?;
         let mut col = StringCollector::new(&mut self.output);
-        fmt::write(&mut col, format_args!("{}", value)).map_err(|_| Error::Writer(SerError::BufferFull))?;
+        fmt::write(&mut col, format_args!("{}", value)).map_err(|_| Error::FormatError)?;
         Ok(self.output.write_byte(b'"')?)
     }
 }
@@ -544,11 +595,13 @@ impl<'a, W: SerWrite> fmt::Write for StringCollector<'a, W> {
 
 // This impl is SerializeSeq so these methods are called after `serialize_seq`
 // is called on the Serializer.
-impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeSeq for &'a mut Serializer<W, B> {
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeSeq for &'a mut Serializer<W, B>
+    where <W as SerWrite>::Error: fmt::Display+fmt::Debug
+{
     type Ok = ();
-    type Error = Error;
+    type Error = Error<W::Error>;
 
-    fn serialize_element<T>(&mut self, value: &T) -> Result<()>
+    fn serialize_element<T>(&mut self, value: &T) -> Result<(), W::Error>
         where T: ?Sized + Serialize
     {
         if self.first {
@@ -560,17 +613,19 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeSeq for &'a mut Serializer<W
         value.serialize(&mut **self)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), W::Error> {
         self.first = false;
         Ok(self.output.write_byte(b']')?)
     }
 }
 
-impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeTuple for &'a mut Serializer<W, B> {
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTuple for &'a mut Serializer<W, B>
+    where <W as SerWrite>::Error: fmt::Display+fmt::Debug
+{
     type Ok = ();
-    type Error = Error;
+    type Error = Error<W::Error>;
 
-    fn serialize_element<T>(&mut self, value: &T) -> Result<()>
+    fn serialize_element<T>(&mut self, value: &T) -> Result<(), W::Error>
     where T: ?Sized + Serialize
     {
         if self.first {
@@ -582,17 +637,19 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeTuple for &'a mut Serializer
         value.serialize(&mut **self)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), W::Error> {
         self.first = false;
         Ok(self.output.write_byte(b']')?)
     }
 }
 
-impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeTupleStruct for &'a mut Serializer<W, B> {
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTupleStruct for &'a mut Serializer<W, B>
+    where <W as SerWrite>::Error: fmt::Display+fmt::Debug
+{
     type Ok = ();
-    type Error = Error;
+    type Error = Error<W::Error>;
 
-    fn serialize_field<T>(&mut self, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, value: &T) -> Result<(), W::Error>
         where T: ?Sized + Serialize
     {
         if self.first {
@@ -604,18 +661,20 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeTupleStruct for &'a mut Seri
         value.serialize(&mut **self)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), W::Error> {
         self.first = false;
         Ok(self.output.write_byte(b']')?)
     }
 }
 
 // Tuple variants are a little different. { NAME: [ ... ]}
-impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeTupleVariant for &'a mut Serializer<W, B> {
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTupleVariant for &'a mut Serializer<W, B>
+    where <W as SerWrite>::Error: fmt::Display+fmt::Debug
+{
     type Ok = ();
-    type Error = Error;
+    type Error = Error<W::Error>;
 
-    fn serialize_field<T>(&mut self, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, value: &T) -> Result<(), W::Error>
     where T: ?Sized + Serialize
     {
         if self.first {
@@ -627,20 +686,22 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeTupleVariant for &'a mut Ser
         value.serialize(&mut **self)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), W::Error> {
         self.first = false;
         Ok(self.output.write(b"]}")?)
     }
 }
 
-impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeMap for &'a mut Serializer<W, B> {
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeMap for &'a mut Serializer<W, B>
+    where <W as SerWrite>::Error: fmt::Display+fmt::Debug
+{
     type Ok = ();
-    type Error = Error;
+    type Error = Error<W::Error>;
 
     /// The Serde data model allows map keys to be any serializable type.
     /// JSON only allows string keys so the implementation below will produce invalid
     /// JSON if the key serializes as something other than a string.
-    fn serialize_key<T>(&mut self, key: &T) -> Result<()>
+    fn serialize_key<T>(&mut self, key: &T) -> Result<(), W::Error>
         where T: ?Sized + Serialize
     {
         if self.first {
@@ -652,24 +713,26 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeMap for &'a mut Serializer<W
         key.serialize(&mut **self)
     }
 
-    fn serialize_value<T>(&mut self, value: &T) -> Result<()>
+    fn serialize_value<T>(&mut self, value: &T) -> Result<(), W::Error>
     where T: ?Sized + Serialize
     {
         self.output.write(b":")?;
         value.serialize(&mut **self)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), W::Error> {
         self.first = false;
         Ok(self.output.write_byte(b'}')?)
     }
 }
 
-impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeStruct for &'a mut Serializer<W, B> {
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeStruct for &'a mut Serializer<W, B>
+    where <W as SerWrite>::Error: fmt::Display+fmt::Debug
+{
     type Ok = ();
-    type Error = Error;
+    type Error = Error<W::Error>;
 
-    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), W::Error>
         where T: ?Sized + Serialize
     {
         if self.first {
@@ -683,17 +746,19 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeStruct for &'a mut Serialize
         value.serialize(&mut **self)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), W::Error> {
         self.first = false;
         Ok(self.output.write_byte(b'}')?)
     }
 }
 
-impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeStructVariant for &'a mut Serializer<W, B> {
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeStructVariant for &'a mut Serializer<W, B>
+    where <W as SerWrite>::Error: fmt::Display+fmt::Debug
+{
     type Ok = ();
-    type Error = Error;
+    type Error = Error<W::Error>;
 
-    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), W::Error>
         where T: ?Sized + Serialize
     {
         if self.first {
@@ -707,7 +772,7 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeStructVariant for &'a mut Se
         value.serialize(&mut **self)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), W::Error> {
         self.first = false;
         Ok(self.output.write(b"}}")?)
     }
@@ -716,7 +781,7 @@ impl<'a, W: SerWrite, B: BytesFormat> ser::SerializeStructVariant for &'a mut Se
 fn format_escaped_str_contents<W>(
     writer: &mut W,
     value: &str,
-) -> Result<()>
+) -> Result<(), W::Error>
     where W: ?Sized + SerWrite
 {
     let bytes = value.as_bytes();

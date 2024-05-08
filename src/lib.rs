@@ -1,3 +1,12 @@
+//! Serializer tools for `no_std`.
+//!
+//! Features a [trait][SerWrite] for objects which are byte-oriented sinks, akin `std::io::Write`.
+//!
+//! Serializers can be implemented using this trait as a writer.
+//!
+//! Embedded or otherwise `no_std` projects can implement [`SerWrite`] for custom sinks.
+//!
+//! Some implemenentations for foreign types are provided depending on the enabled features.
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -13,15 +22,13 @@ mod foreign;
 
 pub type SerResult<T> = Result<T, SerError>;
 
-/// An error returned by [`SerWrite`]
+/// A simple error type that can be used for [`SerWrite::Error`] implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SerError {
     /// Buffer is full
     BufferFull,
 }
-
-// impl serde::de::StdError for SerError {}
 
 impl fmt::Display for SerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -31,39 +38,50 @@ impl fmt::Display for SerError {
     }
 }
 
-// impl serde::ser::Error for SerError {
-//     fn custom<T>(_msg: T) -> Self
-//         where T: fmt::Display
-//     {
-//         unreachable!()
-//     }
-// }
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+impl std::error::Error for SerError {}
 
 /// Serializers should write data to the implementations of this trait.
 pub trait SerWrite {
+    /// An error type returned from the trait methods.
+    type Error;
     /// Write all bytes from `buf` to the internal buffer.
     ///
     /// When over capacity return `Err(SerError::BufferFull)`.
-    fn write(&mut self, buf: &[u8]) -> SerResult<()>;
+    fn write(&mut self, buf: &[u8]) -> Result<(), Self::Error>;
     /// Write a single `byte` to the internal buffer.
     ///
     /// When over capacity return `Err(SerError::BufferFull)`.
     #[inline]
-    fn write_byte(&mut self, byte: u8) -> SerResult<()> {
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         self.write(core::slice::from_ref(&byte))
     }
     /// Write a string to the internal buffer.
     ///
     /// When over capacity return `Err(SerError::BufferFull)`.
     #[inline]
-    fn write_str(&mut self, s: &str) -> SerResult<()> {
+    fn write_str(&mut self, s: &str) -> Result<(), Self::Error> {
         self.write(s.as_bytes())
     }
 }
 
 impl<T: SerWrite> SerWrite for &'_ mut T {
-    fn write(&mut self, buf: &[u8]) -> SerResult<()> {
+    type Error = T::Error;
+
+    #[inline(always)]
+    fn write(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
         (*self).write(buf)
+    }
+
+    #[inline(always)]
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+        (*self).write_byte(byte)
+    }
+
+    #[inline(always)]
+    fn write_str(&mut self, s: &str) -> Result<(), Self::Error> {
+        (*self).write_str(s)
     }
 }
 
@@ -105,6 +123,10 @@ impl<'a> SliceWriter<'a> {
     pub fn rem_capacity(&self) -> usize {
         self.buf.len() - self.len
     }
+    /// Reset cursor to the beginning of a container slice
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
     /// Split the underlying buffer and return the portion of the populated buffer
     /// with an underlying buffer's borrowed lifetime.
     ///
@@ -120,6 +142,8 @@ impl<'a> SliceWriter<'a> {
 }
 
 impl SerWrite for SliceWriter<'_> {
+    type Error = SerError;
+
     fn write(&mut self, buf: &[u8]) -> SerResult<()> {
         let end = self.len + buf.len();
         match self.buf.get_mut(self.len..end) {
@@ -130,6 +154,12 @@ impl SerWrite for SliceWriter<'_> {
             }
             None => Err(SerError::BufferFull)
         }
+    }
+}
+
+impl<'a> fmt::Write for SliceWriter<'a> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        SerWrite::write_str(self, s).map_err(|_| fmt::Error)
     }
 }
 

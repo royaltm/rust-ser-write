@@ -20,8 +20,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["std"]
 std = []
 alloc = []
-arrayvec = ["dep:arrayvec"]
-heapless = ["dep:heapless"]
 
 [dependencies]
 arrayvec = { version = "0.7", default-features = false, optional = true }
@@ -32,5 +30,6 @@ resolver = "2"
 members = [
   ".",
   "ser-write-json",
+  "ser-write-json/examples/embedded",
   "ser-write-msgpack"
 ]

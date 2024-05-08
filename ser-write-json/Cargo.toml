@@ -17,14 +17,14 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["std"]
+default = ["std","ser-write/std"]
 std = []
 alloc = []
 
 [dependencies]
-ryu-js = { version = "1.0" }
+ryu-js = { version = "1.0", default-features = false }
 serde = { version = "1.0.200", default-features = false }
-ser-write = { version = "0.1", path = ".." }
+ser-write = { version = "0.1", path = "..", default-features = false }
 
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }

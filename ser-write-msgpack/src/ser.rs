@@ -65,6 +65,43 @@ pub fn to_writer_named<W, T>(writer: W, value: &T) -> Result<()>
     value.serialize(&mut serializer)
 }
 
+/// An error returned by [`SerWrite`] and serializers
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Error<E> {
+    /// Writer error
+    Writer(E),
+    /// Undetermined map length or too many items
+    MapLength,
+    /// Undetermined sequence length or too many items
+    SeqLength,
+    /// Serializer could not determine string size
+    StrLength,
+    /// Error encoding utf-8 string with pass-through bytes encoder
+    Utf8Encode,
+    /// Error formatting a collected a string
+    FormatError,
+}
+
+pub type Result<T, E> = core::result::Result<T, Error<E>>;
+
+impl<E: fmt::Display+fmt::Debug> serde::de::StdError for Error<E> {}
+
+impl<E: fmt::Display> fmt::Display for Error<E>
+    where SerError: fmt::Display
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Writer(err) => err.fmt(f),
+            Error::MapLength => f.write_str("unknown or invalid map length"),
+            Error::SeqLength => f.write_str("unknown or invalid sequence length"),
+            Error::StrLength => f.write_str("invalid string length"),
+            Error::Utf8Encode => f.write_str("error encoding JSON as UTF-8 string"),
+            Error::FormatError => f.write_str("error collecting a string"),
+        }
+    }
+}
+
 impl<W: SerWrite> CompactSerializer<W> {
     fn serialize_variant(&mut self, variant_index: u32, _variant_name: &'static str) -> Result<()> {
         write_u32(&mut self.output, variant_index)
