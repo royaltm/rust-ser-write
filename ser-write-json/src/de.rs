@@ -719,26 +719,26 @@ impl<'de> ParseStringAsBytes<'de> for Deserializer<'de, ByteHexStrParser> {
 impl<'de> ParseStringAsBytes<'de> for Deserializer<'de, ByteBase64StrParser> {
     fn parse_str_content_as_bytes(&mut self) -> Result<&'de[u8]> {
         let input = self.input.get_mut(self.index..).ok_or_else(|| Error::UnexpectedEof)?;
-        if let Some((dlen, mut elen)) = crate::base64::decode(input) {
-            match input[elen] {
-                QU => return Ok(self.split_some(dlen, elen - dlen)),
-                b'=' => { /* eat padding */
-                    if let Some(pos) = input.get(elen+1..).and_then(|slice|
-                        slice.iter().position(|&b| b != b'='))
-                    {
-                        elen = elen + 1 + pos;
-                        if input[elen] == QU {
-                            return Ok(self.split_some(dlen, elen + 1 - dlen));
-                        }
-                        else {
-                            return Err(Error::UnexpectedChar)
-                        }
+        let (dlen, mut elen) = crate::base64::decode(input);
+        match input.get(elen) {
+            Some(&QU) => Ok(self.split_some(dlen, elen + 1 - dlen)),
+            Some(&b'=') => { /* eat padding */
+                if let Some(pos) = input.get(elen+1..).and_then(|slice|
+                    slice.iter().position(|&b| b != b'='))
+                {
+                    elen = elen + 1 + pos;
+                    return if input[elen] == QU {
+                        Ok(self.split_some(dlen, elen + 1 - dlen))
+                    }
+                    else {
+                        Err(Error::UnexpectedChar)
                     }
                 }
-                _ => return Err(Error::UnexpectedChar)
+                Err(Error::UnexpectedEof)
             }
+            Some(..) => Err(Error::UnexpectedChar),
+            None => Err(Error::UnexpectedEof)
         }
-        Err(Error::UnexpectedEof)
     }
 }
 

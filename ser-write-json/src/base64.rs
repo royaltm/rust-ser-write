@@ -1,12 +1,14 @@
+//! Base-64 codec.
 use core::cell::Cell;
-use crate::{SerWrite, SerResult};
+use crate::SerWrite;
 
 static ALPHABET: &[u8;64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/// Encode bytes as base-64 char codes into SerWrite.
+/// Encode an array of bytes as base-64 ASCII armour codes into a [`SerWrite`] implementing object.
 ///
-/// This function does not append base64 '=' padding
-pub fn encode<W: SerWrite>(ser: &mut W, bytes: &[u8]) -> SerResult<()> {
+/// _Note_: This function does not append base-64 '=' padding characters by itself
+/// and instead returns the number of padding characters required: 0-2.
+pub fn encode<W: SerWrite>(ser: &mut W, bytes: &[u8]) -> Result<u8, W::Error> {
     let mut chunks = bytes.chunks_exact(3);
     for slice in chunks.by_ref() {
         let [a,b,c] = slice.try_into().unwrap();
@@ -26,6 +28,7 @@ pub fn encode<W: SerWrite>(ser: &mut W, bytes: &[u8]) -> SerResult<()> {
                 ((b & 0x0F) << 2)
             ].map(|n| ALPHABET[(n & 0x3F) as usize]);
             ser.write(&output)?;
+            Ok(1)
         }
         [a] => {
             let output = [
@@ -33,10 +36,10 @@ pub fn encode<W: SerWrite>(ser: &mut W, bytes: &[u8]) -> SerResult<()> {
                 ((a & 0x03) << 4),
             ].map(|n| ALPHABET[(n & 0x3F) as usize]);
             ser.write(&output)?;
+            Ok(2)
         }
-        _ => {/* nothing to do */}
+        _ => Ok(0)
     }
-    Ok(())
 }
 
 #[inline]
@@ -102,8 +105,11 @@ fn get_code(c: u8) -> Option<u8> {
 // 1 01010011 01110101 01000000 (3) (13)(<<6)
 // 1 01010011 01110101 01101110 (4) (7)
 
-/// Decodes a slice in-place until a no-base64 character is found
-pub fn decode(slice: &mut[u8]) -> Option<(usize, usize)> {
+/// Decode a base-64 encoded slice of byte characters in-place until a first
+/// invalid character is found or until the end of the slice.
+///
+/// Return a tuple of: (decoded_len, encoded_len).
+pub fn decode(slice: &mut[u8]) -> (usize, usize) {
     let cells = Cell::from_mut(slice).as_slice_of_cells();
     let mut chunks = cells.chunks_exact(4);
     let mut dest = cells.into_iter();
@@ -131,41 +137,34 @@ pub fn decode(slice: &mut[u8]) -> Option<(usize, usize)> {
         }
     }
     let rem = chunks.remainder();
-    if rem.len() == 0 { /* end of slice */
-        None
-    }
-    else {
-        match rem.into_iter().try_fold(1u32, |acc, cell| {
-                match get_code(cell.get()) {
-                    Some(code) => Ok((acc << 6) | u32::from(code)),
-                    None => Err(acc)
-                }
-            })
-        {
-            /* no tail */
-            Ok(1) => Some((dcount, dcount * 4 / 3)),
-            /* some tail */
-            Err(packed) => handle_tail(dcount, packed, dest),
-            /* end of slice */
-            _ => None
-        }
+    match rem.into_iter().try_fold(1u32, |acc, cell| {
+            match get_code(cell.get()) {
+                Some(code) => Ok((acc << 6) | u32::from(code)),
+                None => Err(acc)
+            }
+        })
+    {
+        /* no tail */
+        Ok(1) => (dcount, dcount * 4 / 3),
+        /* some tail */
+        Ok(packed)|Err(packed) => handle_tail(dcount, packed, dest)
     }
 }
 
-fn handle_tail<'a, I>(mut dcount: usize, mut packed: u32, mut dest: I) -> Option<(usize, usize)>
+fn handle_tail<'a, I>(mut dcount: usize, mut packed: u32, mut dest: I) -> (usize, usize)
     where I: Iterator<Item=&'a Cell<u8>>
 {
-    // 31->0, 25->1->x, 19->2->1, 13->3->2
+    // 31->(+0, +0), 25->(+0, +1), 19->(+1, +2), 13->(+2, +3)
     let leftovers = (31 - packed.leading_zeros()) / 6;
     packed <<= leftovers*2;
-    let mut tail_count = leftovers.saturating_sub(1);
+    let mut tail_dcount = leftovers.saturating_sub(1);
     let ecount = dcount * 4 / 3 + leftovers as usize;
-    dcount += tail_count as usize;
-    while tail_count != 0 {
-        dest.next().unwrap().set((packed >> (tail_count * 8)) as u8);
-        tail_count -= 1;
+    dcount += tail_dcount as usize;
+    while tail_dcount != 0 {
+        dest.next().unwrap().set((packed >> (tail_dcount * 8)) as u8);
+        tail_dcount -= 1;
     }
-    Some((dcount, ecount))
+    (dcount, ecount)
 }
 
 #[cfg(test)]
@@ -222,16 +221,13 @@ mod tests {
     }
 
     fn test_decode(vec: &mut Vec<u8>, encoded: &[u8], expected: (usize, usize), decoded: &[u8]) {
-        vec.clear();
-        vec.extend_from_slice(encoded);
-        assert_eq!(decode(vec.as_mut_slice()), None);
-        for i in 1..=4 {
+        for i in 0..=4 {
             vec.clear();
             vec.extend_from_slice(encoded);
             for _ in 0..i {
                 vec.push(b'=');
             }
-            assert_eq!(decode(vec.as_mut_slice()), Some(expected));
+            assert_eq!(decode(vec.as_mut_slice()), expected);
             assert_eq!(&vec[..expected.0], decoded);
             assert_eq!(vec[expected.1], b'=');
         }
