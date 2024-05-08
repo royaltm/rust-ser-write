@@ -1,3 +1,4 @@
+//! JSON serde serializer for `ser-write`
 use core::marker::PhantomData;
 use core::fmt;
 use core::mem::MaybeUninit;
@@ -9,26 +10,29 @@ use std::{vec::Vec, string::String};
 use alloc::{vec::Vec, string::String};
 
 use serde::{ser, Serialize};
-// use ser_write::{SerResult as Result};
-
-pub use crate::{SerWrite, SerError};
+use crate::{SerWrite, SerError};
 
 /// JSON serializer serializing bytes to an array of numbers
 pub type SerializerByteArray<W> = Serializer<W, ArrayByteEncoder>;
-/// JSON serializer serializing bytes to a hexadecimal string
+/// JSON serializer serializing bytes to a HEX string
 pub type SerializerByteHexStr<W> = Serializer<W, HexStrByteEncoder>;
-/// JSON serializer serializing bytes to a base-64 string
+/// JSON serializer serializing bytes to a BASE-64 string
 pub type SerializerByteBase64<W> = Serializer<W, Base64ByteEncoder>;
 /// JSON serializer passing bytes through
 pub type SerializerBytePass<W> = Serializer<W, PassThroughByteEncoder>;
 
+/// Serde JSON serializer.
+///
+/// `W` - should implement [`SerWrite`] and `B` - [`ByteEncoder`].
+///
+/// `ByteEncoder` determines [`ser::Serializer::serialize_bytes`] implementation.
 pub struct Serializer<W, B> {
     first: bool,
     output: W,
     format: PhantomData<B>
 }
 
-/// An error returned by the JSON [`Serializer`].
+/// Serialization error
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Error<E> {
@@ -48,6 +52,7 @@ pub enum Error<E> {
     SerializeError
 }
 
+/// Serialization result
 pub type Result<T, E> = core::result::Result<T, Error<E>>;
 
 impl<E: fmt::Display+fmt::Debug> serde::de::StdError for Error<E> {}
@@ -94,7 +99,7 @@ impl<E> From<E> for Error<E> {
     }
 }
 
-/// Implementing objects Provides `serialize_bytes` function
+/// Determine how arrays of bytes are serialized.
 pub trait ByteEncoder: Sized {
     fn serialize_bytes<'a, W: SerWrite>(
         ser: &'a mut Serializer<W, Self>,
@@ -105,9 +110,9 @@ pub trait ByteEncoder: Sized {
 
 /// Implements [`ByteEncoder::serialize_bytes`] serializing to an array of numbers
 pub struct ArrayByteEncoder;
-/// Implements [`ByteEncoder::serialize_bytes`] serializing to a hexadecimal string
+/// Implements [`ByteEncoder::serialize_bytes`] serializing to a HEX string
 pub struct HexStrByteEncoder;
-/// Implements [`ByteEncoder::serialize_bytes`] serializing to a base-64 string
+/// Implements [`ByteEncoder::serialize_bytes`] serializing to a BASE-64 string
 pub struct Base64ByteEncoder;
 /// Implements [`ByteEncoder::serialize_bytes`] passing bytes through
 pub struct PassThroughByteEncoder;
@@ -193,7 +198,7 @@ pub fn to_string_pass_bytes<T>(value: &T) -> Result<String, SerError>
     String::from_utf8(vec).map_err(|_| Error::Utf8Encode)
 }
 
-/// Serialize JSON to a SerWrite implementation using a provided `ByteEncoder`.
+/// Serialize JSON to a [`SerWrite`] implementation using a provided [`ByteEncoder`].
 pub fn to_writer_with_encoder<B, W, T>(writer: W, value: &T) -> Result<(), W::Error>
     where B: ByteEncoder,
           W: SerWrite,
@@ -204,7 +209,7 @@ pub fn to_writer_with_encoder<B, W, T>(writer: W, value: &T) -> Result<(), W::Er
     value.serialize(&mut serializer)
 }
 
-/// Serialize JSON to a SerWrite implementation
+/// Serialize JSON to a [`SerWrite`] implementation.
 ///
 /// Serialize bytes as arrays of numbers.
 pub fn to_writer<W, T>(writer: W, value: &T) -> Result<(), W::Error>
@@ -215,9 +220,9 @@ pub fn to_writer<W, T>(writer: W, value: &T) -> Result<(), W::Error>
     to_writer_with_encoder::<ArrayByteEncoder, _, _>(writer, value)
 }
 
-/// Serialize JSON to a SerWrite implementation
+/// Serialize JSON to a [`SerWrite`] implementation.
 ///
-/// Serialize bytes as hex strings.
+/// Serialize bytes as HEX strings.
 pub fn to_writer_hex_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
     where W: SerWrite,
           <W as SerWrite>::Error: fmt::Display + fmt::Debug,
@@ -226,9 +231,9 @@ pub fn to_writer_hex_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
     to_writer_with_encoder::<HexStrByteEncoder, _, _>(writer, value)
 }
 
-/// Serialize JSON to a SerWrite implementation
+/// Serialize JSON to a [`SerWrite`] implementation.
 ///
-/// Serialize bytes as base-64 strings.
+/// Serialize bytes as BASE-64 strings.
 pub fn to_writer_base64_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
     where W: SerWrite,
           <W as SerWrite>::Error: fmt::Display + fmt::Debug,
@@ -237,7 +242,7 @@ pub fn to_writer_base64_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error
     to_writer_with_encoder::<Base64ByteEncoder, _, _>(writer, value)
 }
 
-/// Serialize JSON to a SerWrite implementation, passing through byte arrays
+/// Serialize JSON to a [`SerWrite`] implementation.
 ///
 /// Serialize bytes passing them through.
 /// The notion here is that byte arrays can hold already serialized JSON fragments.
@@ -250,16 +255,17 @@ pub fn to_writer_pass_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
 }
 
 impl<W, B> Serializer<W, B> {
+    /// Create a new `Serializer` with the given `output` that should implement [`SerWrite`].
     #[inline(always)]
     pub fn new(output: W) -> Self {
         Serializer { first: false, output, format: PhantomData }
     }
-
+    /// Destruct self returning the `output` object.
     #[inline(always)]
     pub fn into_inner(self) -> W {
         self.output
     }
-    /// Provides access to the writer for implementors of [`ByteEncoder`].
+    /// Provide access to the inner writer for implementors of [`ByteEncoder`].
     #[inline(always)]
     pub fn writer(&mut self) -> &mut W {
         &mut self.output
@@ -267,6 +273,7 @@ impl<W, B> Serializer<W, B> {
 }
 
 impl<W: SerWrite, B> Serializer<W, B> {
+    /// Serialize given slice of bytes as ASCII HEX nibbles
     pub fn serialize_bytes_as_hex_str(&mut self, v: &[u8]) -> Result<(), W::Error> {
         let writer = self.writer();
         for &byte in v.iter() {

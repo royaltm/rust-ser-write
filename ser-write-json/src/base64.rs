@@ -6,7 +6,7 @@ static ALPHABET: &[u8;64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 
 /// Encode an array of bytes as BASE-64 ASCII armour codes into a [`SerWrite`] implementing object.
 ///
-/// _Note_: This function does not append BASE-64 '=' padding characters by itself
+/// This function does not append BASE-64 `'='` padding characters by itself
 /// and instead returns the number of padding characters required: 0-2.
 pub fn encode<W: SerWrite>(ser: &mut W, bytes: &[u8]) -> Result<u8, W::Error> {
     let mut chunks = bytes.chunks_exact(3);
@@ -114,7 +114,7 @@ fn decode_cell(acc: u32, cell: &Cell<u8>) -> core::result::Result<u32, u32> {
 /// Decode a BASE-64 encoded slice of byte characters in-place until a first
 /// invalid character is found or until the end of the slice.
 ///
-/// Return a tuple of: (decoded_len, encoded_len).
+/// Return a tuple of: `(decoded_len, encoded_len)`.
 ///
 /// `decoded_len <= encoded_len <= slice.len()`
 pub fn decode(slice: &mut[u8]) -> (usize, usize) {

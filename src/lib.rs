@@ -1,12 +1,14 @@
-//! Serializer tools for `no_std`.
+//! Tools for implementing writer style serializers dedicated for `no_std` targets.
 //!
-//! Features a [trait][SerWrite] for objects which are byte-oriented sinks, akin `std::io::Write`.
+//! Features a [trait][SerWrite] for objects which are byte-oriented sinks, akin to `std::io::Write`.
 //!
 //! Serializers can be implemented using this trait as a writer.
 //!
 //! Embedded or otherwise `no_std` projects can implement [`SerWrite`] for custom sinks.
 //!
-//! Some implemenentations for foreign types are provided depending on the enabled features.
+//! Some [implemenentations] for foreign types are provided depending on the enabled features.
+//!
+//! [implemenentations]: SerWrite#foreign-impls
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -130,14 +132,10 @@ impl<'a> SliceWriter<'a> {
     /// Split the underlying buffer and return the portion of the populated buffer
     /// with an underlying buffer's borrowed lifetime.
     ///
-    /// Once a SliceWriter is dropped the slice stays borrowed as long as an original container lives.
+    /// Once a [`SliceWriter`] is dropped the slice stays borrowed as long as an original container lives.
     pub fn split(self) -> (&'a mut[u8], Self) {
         let (res, buf) = self.buf.split_at_mut(self.len);
         (res, Self { buf, len: 0 })
-    }
-    /// Destruct into an underlying buffer
-    pub fn into_buf(self) -> &'a mut [u8] {
-        self.buf
     }
 }
 

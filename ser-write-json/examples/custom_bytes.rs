@@ -1,8 +1,9 @@
+//! An example demonstrating how to implement custom bytes decoder/encoder traits
 use core::fmt;
 use serde::{Serialize, Deserialize, de};
 use ser_write_json::{
     base64,
-    SerWrite,
+    ser_write::SerWrite,
     ser::{Error, Serializer, ByteEncoder},
     to_writer_with_encoder,
     StringByteDecoder, Deserializer, Result as DeResult,
@@ -93,6 +94,8 @@ fn main() {
         number: core::f32::consts::PI,
         blob: &[0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233],
     };
+
+    println!("Bytes as an array");
     let mut vec = Vec::new();
     to_writer(&mut vec, &test).unwrap();
     let s = String::from_utf8(vec).unwrap();
@@ -104,6 +107,7 @@ fn main() {
     println!("{:?}", detest);
     assert_eq!(detest, test);
 
+    println!("Bytes as a HEX string");
     vec.clear();
     to_writer_hex_bytes(&mut vec, &test).unwrap();
     let s = String::from_utf8(vec).unwrap();
@@ -115,6 +119,7 @@ fn main() {
     println!("{:?}", detest);
     assert_eq!(detest, test);
 
+    println!("Bytes as a BASE-64 string");
     vec.clear();
     to_writer_base64_bytes(&mut vec, &test).unwrap();
     let s = String::from_utf8(vec).unwrap();

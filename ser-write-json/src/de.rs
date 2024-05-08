@@ -1,3 +1,4 @@
+//! JSON serde deserializer
 #![allow(unused_imports)]
 use core::cell::Cell;
 // use std::println;
@@ -11,16 +12,18 @@ use core::{fmt, str};
 
 use serde::de::{self, Visitor};
 
-/// JSON deserializer with bytes deserialized from strings without any special decoding (UTF-8)
-pub type DeserializerUtf8ByteStr<'de> = Deserializer<'de, StringByteUtf8Decoder>;
-/// JSON deserializer with bytes deserialized from strings decoded as hexadecimal ASCII nibble pairs
+/// JSON deserializer with bytes deserialized from JSON strings (with unescaping)
+/// without any additional decoding
+pub type DeserializerNopeByteStr<'de> = Deserializer<'de, StringByteNopeDecoder>;
+/// JSON deserializer with bytes deserialized from HEX-encoded strings
 pub type DeserializerHexByteStr<'de> = Deserializer<'de, StringByteHexDecoder>;
-/// JSON deserializer with bytes deserialized from strings decoded as BASE-64
+/// JSON deserializer with bytes deserialized from BASE-64 encoded strings
 pub type DeserializerBase64ByteStr<'de> = Deserializer<'de, StringByteBase64Decoder>;
 
-/// Deserializes an instance of type `T` from a mutable slice of bytes of JSON text.
+/// Deserialize an instance of type `T` from a mutable slice of bytes of JSON text.
 ///
-/// 
+/// `P` must implement [`StringByteDecoder`] and determines how strings are converted
+/// to bytes.
 ///
 /// The provided slice must be writable so the deserializer can unescape strings 
 /// and parse bytes from arrays or strings in-place.
@@ -39,7 +42,10 @@ pub fn from_mut_slice_with_decoder<'a, P, T>(v: &'a mut [u8]) -> Result<T>
     Ok(value)
 }
 
-/// Deserializes an instance of type `T` from a mutable slice of bytes of JSON text.
+/// Deserialize an instance of type `T` from a mutable slice of bytes of JSON text.
+///
+/// Byte arrays deserialized from a string retain the original content after
+/// unescaping all `\` tokens. The content is **not** UTF-8 validated.
 ///
 /// The provided slice must be writable so the deserializer can unescape strings 
 /// and parse bytes from arrays or strings in-place.
@@ -50,10 +56,13 @@ pub fn from_mut_slice_with_decoder<'a, P, T>(v: &'a mut [u8]) -> Result<T>
 pub fn from_mut_slice<'a, T>(v: &'a mut [u8]) -> Result<T>
     where T: de::Deserialize<'a>
 {
-    from_mut_slice_with_decoder::<StringByteUtf8Decoder, _>(v)
+    from_mut_slice_with_decoder::<StringByteNopeDecoder, _>(v)
 }
 
-/// Deserializes an instance of type `T` from a mutable slice of bytes of JSON text.
+/// Deserialize an instance of type `T` from a mutable slice of bytes of JSON text.
+///
+/// Byte arrays deserialized from a string are decoded expecting two hexadecimal ASCII
+/// characters per byte.
 ///
 /// The provided slice must be writable so the deserializer can unescape strings 
 /// and parse bytes from arrays or strings in-place.
@@ -67,7 +76,10 @@ pub fn from_mut_slice_hex_bytes<'a, T>(v: &'a mut [u8]) -> Result<T>
     from_mut_slice_with_decoder::<StringByteHexDecoder, _>(v)
 }
 
-/// Deserializes an instance of type `T` from a mutable slice of bytes of JSON text.
+/// Deserialize an instance of type `T` from a mutable slice of bytes of JSON text.
+///
+/// Byte arrays deserialized from a string are decoded expecting [Base64] standard encoding
+/// with optional padding.
 ///
 /// The provided slice must be writable so the deserializer can unescape strings 
 /// and parse bytes from arrays or strings in-place.
@@ -75,6 +87,8 @@ pub fn from_mut_slice_hex_bytes<'a, T>(v: &'a mut [u8]) -> Result<T>
 /// __NOTE__: Assume the original slice content will be modified!
 ///
 /// Any `&str` or `&[u8]` in the returned type will contain references to the provided slice.
+///
+/// [Base64]: https://datatracker.ietf.org/doc/html/rfc4648#section-4
 pub fn from_mut_slice_base64_bytes<'a, T>(v: &'a mut [u8]) -> Result<T>
     where T: de::Deserialize<'a>
 {
@@ -84,6 +98,16 @@ pub fn from_mut_slice_base64_bytes<'a, T>(v: &'a mut [u8]) -> Result<T>
 /// Deserialization result
 pub type Result<T> = core::result::Result<T, Error>;
 
+/// Serde JSON deserializer.
+///
+/// `P` must implement [`StringByteDecoder`].
+///
+/// * deserializes data from a mutable slice,
+/// * unescapes strings in-place,
+/// * decodes strings into bytes in-place,
+/// * deserializes borrowed references to `&str` and `&[u8]` types,
+/// * deserializes bytes from arrays of numbers,
+/// * deserializes bytes from strings using `P` as a string decoder.
 pub struct Deserializer<'de, P> {
     input: &'de mut[u8],
     index: usize,
@@ -96,6 +120,7 @@ impl From<Utf8Error> for Error {
     }
 }
 
+/// Deserialization error
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[non_exhaustive]
 pub enum Error {
@@ -209,11 +234,20 @@ impl fmt::Display for Error {
     }
 }
 
-pub struct StringByteUtf8Decoder;
+/// Convert strings to byte arrays by unescaping original JSON strings
+/// without any additional decoding
+pub struct StringByteNopeDecoder;
+/// Convert strings to byte arrays by decoding HEX-encoded strings
 pub struct StringByteHexDecoder;
+/// Convert strings to byte arrays by decoding BASE-64 encoded strings
 pub struct StringByteBase64Decoder;
 
+/// Auxiliary trait for objects implementing string to bytes decoding.
 pub trait StringByteDecoder<'de>: Sized {
+    /// Should decode bytes from the JSON string after the opening `b'"'`
+    /// has been consumed and until the closing `b'"'` is found in the input slice.
+    ///
+    /// A decoded byte slice must fit in place where the encoded string originaly was.
     fn decode_string_to_bytes(de: &mut Deserializer<'de, Self>) -> Result<&'de[u8]>;
 }
 
@@ -763,7 +797,7 @@ impl<'de, P> Deserializer<'de, P> {
     }
 }
 
-impl<'de> StringByteDecoder<'de> for StringByteUtf8Decoder {
+impl<'de> StringByteDecoder<'de> for StringByteNopeDecoder {
     #[inline(always)]
     fn decode_string_to_bytes(de: &mut Deserializer<'de, Self>) -> Result<&'de[u8]> {
         de.parse_str_bytes_content()
@@ -1326,33 +1360,33 @@ mod tests {
     fn test_parse_str_content() {
         let mut test = [0;1];
         test.copy_from_slice(br#"""#);
-        let mut deser = DeserializerUtf8ByteStr::from_mut_slice(&mut test);
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
         assert_eq!(deser.parse_str_content().unwrap(), "");
 
         let mut test = [0;13];
         test.copy_from_slice(br#"Hello World!""#);
-        let mut deser = DeserializerUtf8ByteStr::from_mut_slice(&mut test);
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
         assert_eq!(deser.parse_str_content().unwrap(), "Hello World!");
         assert!(deser.input.is_empty());
         assert_eq!(deser.index, 0);
 
         let mut test = [0;46];
         test.copy_from_slice(br#"\u0020Hello\r\\ \b\nW\tor\fld\u007Fy\u0306!\"""#);
-        let mut deser = DeserializerUtf8ByteStr::from_mut_slice(&mut test);
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
         assert_eq!(deser.parse_str_content().unwrap(), " Hello\r\\ \x08\nW\tor\x0cld\x7fy̆!\"");
         assert!(deser.input.is_empty());
         assert_eq!(deser.index, 0);
 
         let mut test = [0;13];
         test.copy_from_slice(br#"Hello World!""#);
-        let mut deser = DeserializerUtf8ByteStr::from_mut_slice(&mut test);
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
         assert_eq!(deser.parse_str_content().unwrap(), "Hello World!");
         assert!(deser.input.is_empty());
         assert_eq!(deser.index, 0);
 
         let mut test = [0;2];
         test.copy_from_slice(b"\n\"");
-        let mut deser = DeserializerUtf8ByteStr::from_mut_slice(&mut test);
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
         assert_eq!(deser.parse_str_content(), Err(Error::StringControlChar));
     }
 
