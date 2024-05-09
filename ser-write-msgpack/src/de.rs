@@ -1,16 +1,57 @@
 //! MessagePack serde deserializer
-#![allow(unused_imports)]
+
+// use std::println;
+#[cfg(feature = "std")]
+use std::{string::ToString};
+
+#[cfg(all(feature = "alloc",not(feature = "std")))]
+use alloc::{string::ToString};
+
 use core::convert::Infallible;
 use core::num::{NonZeroUsize, TryFromIntError};
-use core::ops::Neg;
-use core::slice::from_raw_parts_mut;
 use core::str::{Utf8Error, FromStr};
 use core::{fmt, str};
-use serde::forward_to_deserialize_any;
 use serde::de::{self, Visitor, SeqAccess, MapAccess, DeserializeSeed};
 
 use crate::magick::*;
 
+/// Deserialize an instance of type `T` from a slice of bytes in a MessagePack format.
+///
+/// Return a tuple with `(value, msgpack_len)`. `msgpack_len` <= `input.len()`.
+///
+/// Any `&str` or `&[u8]` in the returned type will contain references to the provided slice.
+pub fn from_slice<'a, T>(input: &'a[u8]) -> Result<(T, usize)>
+    where T: de::Deserialize<'a>
+{
+    let mut de = Deserializer::from_slice(input);
+    let value = de::Deserialize::deserialize(&mut de)?;
+    let tail_len = de.end()?;
+
+    Ok((value, input.len() - tail_len))
+}
+
+/// Deserialize an instance of type `T` from a slice of bytes in a MessagePack format.
+///
+/// Return a tuple with `(value, tail)`, where `tail` is the tail of the input beginning
+/// at the byte following the last byte of the deserialized input.
+///
+/// Any `&str` or `&[u8]` in the returned type will contain references to the provided slice.
+pub fn from_slice_split_tail<'a, T>(input: &'a[u8]) -> Result<(T, &'a[u8])>
+    where T: de::Deserialize<'a>
+{
+    let (value, len) = from_slice(input)?;
+    Ok((value, &input[len..]))
+}
+
+/// Serde MessagePack deserializer.
+///
+/// * deserializes data from a slice,
+/// * deserializes borrowed references to `&str` and `&[u8]` types,
+/// * deserializes structs from MessagePack maps or arrays.
+/// * deserializes enum variants and struct fields from MessagePack strings or integers.
+/// * deserializes integers from any MessagePack integer type as long as the number can be casted safely
+/// * deserializes floats from any MessagePack integer or float types
+/// * deserializes floats as NaN from nil
 pub struct Deserializer<'de> {
     input: &'de[u8],
     index: usize
@@ -20,7 +61,7 @@ pub struct Deserializer<'de> {
 pub type Result<T> = core::result::Result<T, Error>;
 
 /// Deserialization error
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 #[non_exhaustive]
 pub enum Error {
     /// EOF while parsing
@@ -53,17 +94,31 @@ pub enum Error {
     ExpectedStruct,
     /// Expected struct or variant identifier
     ExpectedIdentifier,
+    /// Trailing unserialized array or map elements
+    TrailingElements,
     /// Invalid length
     InvalidLength,
-    /// Error with a custom message that we had to discard.
-    CustomError
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    /// An error passed down from a [`serde::de::Deserialize`] implementation
+    DeserializeError(std::string::String),
+    #[cfg(not(any(feature = "std", feature = "alloc")))]
+    DeserializeError
 }
 
 impl serde::de::StdError for Error {}
 
+#[cfg(any(feature = "std", feature = "alloc"))]
+impl de::Error for Error {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
+        Error::DeserializeError(msg.to_string())
+    }
+}
+
+#[cfg(not(any(feature = "std", feature = "alloc")))]
 impl de::Error for Error {
     fn custom<T: fmt::Display>(_msg: T) -> Self {
-        Error::CustomError
+        Error::DeserializeError
     }
 }
 
@@ -80,13 +135,17 @@ impl fmt::Display for Error {
             Error::ExpectedNumber => "Expected MessagePack number",
             Error::ExpectedString => "Expected MessagePack string",
             Error::ExpectedBin => "Expected MessagePack bin",
-            Error::ExpectedNil => "Expected MessagePack NIL",
+            Error::ExpectedNil => "Expected MessagePack nil",
             Error::ExpectedArray => "Expected MessagePack array",
             Error::ExpectedMap => "Expected MessagePack map",
             Error::ExpectedStruct => "Expected MessagePack map or array",
             Error::ExpectedIdentifier => "Expected a struct field or enum variant identifier",
+            Error::TrailingElements => "Too many elements for a deserialized type",
             Error::InvalidLength => "Invalid length",
-            Error::CustomError => "MessagePack does not match deserializer’s expected format.",
+            #[cfg(any(feature = "std", feature = "alloc"))]
+            Error::DeserializeError(s) => return write!(f, "{} while deserializing MessagePack", s),
+            #[cfg(not(any(feature = "std", feature = "alloc")))]
+            Error::DeserializeError => "MessagePack does not match deserializer’s expected format",
         })
     }
 }
@@ -115,20 +174,18 @@ enum MsgType {
     Map(usize),
 }
 
+/// Methods in a `Deserializer` are made public, but expect them to be modified in future releases.
 impl<'de> Deserializer<'de> {
     /// Provide a slice from which to deserialize
     pub fn from_slice(input: &'de[u8]) -> Self {
         Deserializer { input, index: 0, }
     }
 
-    /// Consume deserializer and return the remaining portion of the input slice
-    pub fn end(self) -> Result<&'de[u8]> {
-        if let Some(input) = self.input.get(self.index..) {
-            Ok(input)
-        }
-        else {
-            Err(Error::UnexpectedEof)
-        }
+    /// Consume deserializer and return the size of the remaining portion of the input slice
+    pub fn end(self) -> Result<usize> {
+        self.input.len()
+        .checked_sub(self.index)
+        .ok_or_else(|| Error::UnexpectedEof)
     }
 
     /// Peek at the next byte code, otherwise return `Err(Error::UnexpectedEof)`.
@@ -148,8 +205,8 @@ impl<'de> Deserializer<'de> {
     pub fn input_ref(&mut self) -> Result<&[u8]> {
         self.input.get(self.index..).ok_or_else(|| Error::UnexpectedEof)
     }
-    /// Split the unparsed portion of the input slice between `0..len` and return it with
-    /// the lifetime of the original slice container.
+    /// Split the unparsed portion of the input slice between `0..len` and on success
+    /// return it with the lifetime of the original slice container.
     ///
     /// The returned slice can be passed to `visit_borrowed_*` functions of a [`Visitor`].
     ///
@@ -157,23 +214,29 @@ impl<'de> Deserializer<'de> {
     ///
     /// __Panics__ if `cursor` + `len` overflows `usize` integer capacity.
     pub fn split_input(&mut self, len: usize) -> Result<&'de[u8]> {
-        let at = self.index.checked_add(len).unwrap();
-        if at > self.input.len() {
-            return Err(Error::UnexpectedEof)
+        let input = self.input.get(self.index..)
+                    .ok_or_else(|| Error::UnexpectedEof)?;
+        // let (res, input) = self.input.split_at_checked(len)
+        //             .ok_or_else(|| Error::UnexpectedEof)?;
+        let (res, input) = if len <= input.len() {
+           input.split_at(len)
         }
-        let (res, input) = self.input.split_at(at);
+        else {
+            return Err(Error::UnexpectedEof)
+        };
         self.input = input;
         self.index = 0;
         Ok(res)
     }
 
+    /// Fetch the next byte from input or return an `Err::UnexpectedEof` error.
     pub fn fetch(&mut self) -> Result<u8> {
         let c = self.peek()?;
         self.eat_some(1);
         Ok(c)
     }
 
-    pub fn fetch_array<const N: usize>(&mut self) -> Result<[u8;N]> {
+    fn fetch_array<const N: usize>(&mut self) -> Result<[u8;N]> {
         let index = self.index;
         let res = self.input.get(index..index+N)
         .ok_or_else(|| Error::UnexpectedEof)?
@@ -182,43 +245,43 @@ impl<'de> Deserializer<'de> {
         Ok(res)
     }
 
-    pub fn fetch_u8(&mut self) -> Result<u8> {
+    fn fetch_u8(&mut self) -> Result<u8> {
         Ok(u8::from_be_bytes(self.fetch_array()?))
     }
 
-    pub fn fetch_i8(&mut self) -> Result<i8> {
+    fn fetch_i8(&mut self) -> Result<i8> {
         Ok(i8::from_be_bytes(self.fetch_array()?))
     }
 
-    pub fn fetch_u16(&mut self) -> Result<u16> {
+    fn fetch_u16(&mut self) -> Result<u16> {
         Ok(u16::from_be_bytes(self.fetch_array()?))
     }
 
-    pub fn fetch_i16(&mut self) -> Result<i16> {
+    fn fetch_i16(&mut self) -> Result<i16> {
         Ok(i16::from_be_bytes(self.fetch_array()?))
     }
 
-    pub fn fetch_u32(&mut self) -> Result<u32> {
+    fn fetch_u32(&mut self) -> Result<u32> {
         Ok(u32::from_be_bytes(self.fetch_array()?))
     }
 
-    pub fn fetch_i32(&mut self) -> Result<i32> {
+    fn fetch_i32(&mut self) -> Result<i32> {
         Ok(i32::from_be_bytes(self.fetch_array()?))
     }
 
-    pub fn fetch_u64(&mut self) -> Result<u64> {
+    fn fetch_u64(&mut self) -> Result<u64> {
         Ok(u64::from_be_bytes(self.fetch_array()?))
     }
 
-    pub fn fetch_i64(&mut self) -> Result<i64> {
+    fn fetch_i64(&mut self) -> Result<i64> {
         Ok(i64::from_be_bytes(self.fetch_array()?))
     }
 
-    pub fn fetch_f32(&mut self) -> Result<f32> {
+    fn fetch_f32(&mut self) -> Result<f32> {
         Ok(f32::from_be_bytes(self.fetch_array()?))
     }
 
-    pub fn fetch_f64(&mut self) -> Result<f64> {
+    fn fetch_f64(&mut self) -> Result<f64> {
         Ok(f64::from_be_bytes(self.fetch_array()?))
     }
 
@@ -274,7 +337,11 @@ impl<'de> Deserializer<'de> {
         Ok(n)
     }
 
-    fn eat_item(&mut self) -> Result<()> {
+    /// Attempts to consume a single MessagePack message from the input without fully decoding its content.
+    ///
+    /// Return `Ok(())` on success or `Err(Error::UnexpectedEof)` if there was not enough data
+    /// to fully decode a MessagePack item.
+    pub fn eat_message(&mut self) -> Result<()> {
         use MsgType::*;
         let mtyp = match self.fetch()? {
             NIL|
@@ -285,7 +352,7 @@ impl<'de> Deserializer<'de> {
             c@(FIXMAP..=FIXMAP_MAX) => Map((c as usize) & MAX_FIXMAP_SIZE),
             c@(FIXARRAY..=FIXARRAY_MAX) => Array((c as usize) & MAX_FIXARRAY_SIZE),
             c@(FIXSTR..=FIXSTR_MAX) => Single((c as usize) & MAX_FIXSTR_SIZE),
-            0xc1 => return Err(Error::ReservedCode),
+            RESERVED => return Err(Error::ReservedCode),
             BIN_8|STR_8 => Single(self.fetch_u8()?.into()),
             BIN_16|STR_16 => Single(self.fetch_u16()?.into()),
             BIN_32|STR_32 => Single(self.fetch_u32()?.try_into()?),
@@ -322,15 +389,15 @@ impl<'de> Deserializer<'de> {
 
     fn eat_seq_items(&mut self, len: usize) -> Result<()> {
         for _ in 0..len {
-            self.eat_item()?;
+            self.eat_message()?;
         }
         Ok(())
     }
 
     fn eat_map_items(&mut self, len: usize) -> Result<()> {
         for _ in 0..len {
-            self.eat_item()?;
-            self.eat_item()?;
+            self.eat_message()?;
+            self.eat_message()?;
         }
         Ok(())
     }
@@ -341,6 +408,10 @@ impl<'de> Deserializer<'de> {
 impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     type Error = Error;
 
+    fn is_human_readable(&self) -> bool {
+        false
+    }
+
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
         where V: Visitor<'de>
     {
@@ -350,7 +421,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
             FIXARRAY..=FIXARRAY_MAX => self.deserialize_seq(visitor),
             FIXSTR..=FIXSTR_MAX => self.deserialize_str(visitor),
             NIL => self.deserialize_unit(visitor),
-            0xc1 => Err(Error::ReservedCode),
+            RESERVED => Err(Error::ReservedCode),
             FALSE|
             TRUE => self.deserialize_bool(visitor),
             BIN_8|
@@ -451,11 +522,14 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
             FLOAT_32 => self.fetch_f32()?,
             FLOAT_64 => self.fetch_f64()? as f32,
             NIL => f32::NAN,
-            UINT_8  => self.fetch_u8()? as f32,
+            n@(MIN_POSFIXINT..=MAX_POSFIXINT|NEGFIXINT..=0xff) => {
+                (n as i8) as f32
+            }
+            UINT_8  => self.fetch_u8()?  as f32,
             UINT_16 => self.fetch_u16()? as f32,
             UINT_32 => self.fetch_u32()? as f32,
             UINT_64 => self.fetch_u64()? as f32,
-            INT_8   => self.fetch_i8()? as f32,
+            INT_8   => self.fetch_i8()?  as f32,
             INT_16  => self.fetch_i16()? as f32,
             INT_32  => self.fetch_i32()? as f32,
             INT_64  => self.fetch_i64()? as f32,
@@ -467,15 +541,18 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value>
         where V: Visitor<'de>
     {
-        let f: f64 = match self.peek()? {
+        let f: f64 = match self.fetch()? {
             FLOAT_64 => self.fetch_f64()?,
             FLOAT_32 => self.fetch_f32()? as f64,
             NIL => f64::NAN,
-            UINT_8  => self.fetch_u8()? as f64,
+            n@(MIN_POSFIXINT..=MAX_POSFIXINT|NEGFIXINT..=0xff) => {
+                (n as i8) as f64
+            }
+            UINT_8  => self.fetch_u8()?  as f64,
             UINT_16 => self.fetch_u16()? as f64,
             UINT_32 => self.fetch_u32()? as f64,
             UINT_64 => self.fetch_u64()? as f64,
-            INT_8   => self.fetch_i8()? as f64,
+            INT_8   => self.fetch_i8()?  as f64,
             INT_16  => self.fetch_i16()? as f64,
             INT_32  => self.fetch_i32()? as f64,
             INT_64  => self.fetch_i64()? as f64,
@@ -519,8 +596,11 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value>
         where V: Visitor<'de>
     {
-        match self.fetch()? {
-            NIL => visitor.visit_none(),
+        match self.peek()? {
+            NIL => {
+                self.eat_some(1);
+                visitor.visit_none()
+            }
             _ => visitor.visit_some(self)
         }
     }
@@ -566,7 +646,12 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
             ARRAY_32 => self.fetch_u32()?.try_into()?,
             _ => return Err(Error::ExpectedArray)
         };
-        visitor.visit_seq(CountedAccess::new(self, len))
+        let mut access = CountingAccess::new(self, len);
+        let value = visitor.visit_seq(&mut access)?;
+        if access.count.is_some() {
+            return Err(Error::TrailingElements)
+        }
+        Ok(value)
     }
 
     fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value>
@@ -595,7 +680,12 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
             MAP_32 => self.fetch_u32()?.try_into()?,
             _ => return Err(Error::ExpectedMap)
         };
-        visitor.visit_map(CountedAccess::new(self, len))
+        let mut access = CountingAccess::new(self, len);
+        let value = visitor.visit_map(&mut access)?;
+        if access.count.is_some() {
+            return Err(Error::TrailingElements)
+        }
+        Ok(value)
     }
 
     fn deserialize_struct<V>(
@@ -615,13 +705,17 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
             ARRAY_32 => (false, self.fetch_u32()?.try_into()?),
             _ => return Err(Error::ExpectedStruct)
         };
-        let access = CountedAccess::new(self, len);
-        if map {
-            visitor.visit_map(access)
+        let mut access = CountingAccess::new(self, len);
+        let value = if map {
+            visitor.visit_map(&mut access)?
         }
         else {
-            visitor.visit_seq(access)
+            visitor.visit_seq(&mut access)?
+        };
+        if access.count.is_some() {
+            return Err(Error::TrailingElements)
         }
+        Ok(value)
     }
 
     fn deserialize_enum<V>(
@@ -661,26 +755,26 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value>
         where V: Visitor<'de>
     {
-        self.eat_item()?;
+        self.eat_message()?;
         visitor.visit_unit()
     }
 }
 
-struct CountedAccess<'a, 'de: 'a> {
+struct CountingAccess<'a, 'de: 'a> {
     de: &'a mut Deserializer<'de>,
     count: Option<NonZeroUsize>,
 }
 
-impl<'a, 'de> CountedAccess<'a, 'de> {
+impl<'a, 'de> CountingAccess<'a, 'de> {
     fn new(de: &'a mut Deserializer<'de>, count: usize) -> Self {
-        CountedAccess {
+        CountingAccess {
             de,
             count: NonZeroUsize::new(count),
         }
     }
 }
 
-impl<'de, 'a> SeqAccess<'de> for CountedAccess<'a, 'de> {
+impl<'de, 'a> SeqAccess<'de> for CountingAccess<'a, 'de> {
     type Error = Error;
 
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>>
@@ -692,9 +786,13 @@ impl<'de, 'a> SeqAccess<'de> for CountedAccess<'a, 'de> {
         }
         Ok(None)
     }
+
+    fn size_hint(&self) -> Option<usize> {
+        self.count.map(NonZeroUsize::get).or(Some(0))
+    }
 }
 
-impl<'a, 'de> MapAccess<'de> for CountedAccess<'a, 'de> {
+impl<'a, 'de> MapAccess<'de> for CountingAccess<'a, 'de> {
     type Error = Error;
 
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>>
@@ -711,6 +809,10 @@ impl<'a, 'de> MapAccess<'de> for CountedAccess<'a, 'de> {
         where V: DeserializeSeed<'de>
     {
         seed.deserialize(&mut *self.de)
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        self.count.map(NonZeroUsize::get).or(Some(0))
     }
 }
 
@@ -795,5 +897,697 @@ impl<'a, 'de> de::VariantAccess<'de> for VariantAccess<'a, 'de> {
         where V: de::Visitor<'de>
     {
         de::Deserializer::deserialize_struct(self.de, "", fields, visitor)
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use serde::Deserialize;
+    use super::*;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Unit;
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Test {
+        compact: bool,
+        schema: u32,
+        unit: Unit
+    }
+
+    #[test]
+    fn test_de_msgpack() {
+        let test = Test {
+            compact: true,
+            schema: 0,
+            unit: Unit
+        };
+        assert_eq!(
+            from_slice(b"\x83\xA7compact\xC3\xA6schema\x00\xA4unit\xC0"),
+            Ok((test, 24))
+        );
+        assert_eq!(
+            from_slice::<()>(b"\xC1"),
+            Err(Error::ExpectedNil)
+        );
+        assert_eq!(
+            Deserializer::from_slice(b"\xC1").eat_message(),
+            Err(Error::ReservedCode)
+        );
+    }
+
+    #[test]
+    fn test_de_array() {
+        assert_eq!(from_slice::<[i32; 0]>(&[0x90]), Ok(([], 1)));
+        assert_eq!(from_slice(&[0x93, 0, 1, 2]), Ok(([0, 1, 2], 4)));
+        assert_eq!(from_slice(&[0x9F, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]),
+                              Ok(([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], 16)));
+        assert_eq!(from_slice(&[0xDC, 0, 3, 0, 1, 2]), Ok(([0, 1, 2], 6)));
+        assert_eq!(from_slice(&[0xDD, 0, 0, 0, 3, 0, 1, 2]), Ok(([0, 1, 2], 8)));
+
+        // errors
+        assert_eq!(from_slice::<[i32; 2]>(&[0x80]), Err(Error::ExpectedArray));
+        assert_eq!(from_slice::<[i32; 2]>(&[0x91]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<[i32; 2]>(&[0x92,0x00]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<[i32; 2]>(&[0x92,0xC0]), Err(Error::ExpectedInteger));
+
+        #[cfg(any(feature = "std", feature = "alloc"))]
+        {
+            use std::{vec, vec::Vec};
+            let mut vec = vec![0xDC, 0xFF, 0xFF];
+            for _ in 0..65535 {
+                vec.push(0xC3);
+            }
+            let (res, len) = from_slice::<Vec<bool>>(&vec).unwrap();
+            assert_eq!(len, 65535+3);
+            assert_eq!(res.len(), 65535);
+            for i in 0..65535 {
+                assert_eq!(res[i], true);
+            }
+
+            let mut vec = vec![0xDD, 0x00, 0x01, 0x00, 0x00];
+            for _ in 0..65536 {
+                vec.push(0xC2);
+            }
+            let (res, len) = from_slice::<Vec<bool>>(&vec).unwrap();
+            assert_eq!(len, 65536+5);
+            assert_eq!(res.len(), 65536);
+            for i in 0..65536 {
+                assert_eq!(res[i], false);
+            }
+        }
+    }
+
+    #[test]
+    fn test_de_bool() {
+        assert_eq!(from_slice(&[0xC2]), Ok((false, 1)));
+        assert_eq!(from_slice(&[0xC3]), Ok((true, 1)));
+        // errors
+        assert_eq!(from_slice::<bool>(&[0xC0]), Err(Error::InvalidType));
+    }
+
+    #[test]
+    fn test_de_floating_point() {
+        assert_eq!(from_slice(&[1]), Ok((1.0f64, 1)));
+        assert_eq!(from_slice(&[-1i8 as _]), Ok((-1.0f64, 1)));
+        assert_eq!(from_slice(&[0xCC, 1]), Ok((1.0f64, 2)));
+        assert_eq!(from_slice(&[0xCD, 0, 1]), Ok((1.0f64, 3)));
+        assert_eq!(from_slice(&[0xCE, 0, 0, 0, 1]), Ok((1.0f64, 5)));
+        assert_eq!(from_slice(&[0xCF, 0, 0, 0, 0, 0, 0, 0, 1]), Ok((1.0f64, 9)));
+        assert_eq!(from_slice(&[0xD0, 0xff]), Ok((-1.0f64, 2)));
+        assert_eq!(from_slice(&[0xD1, 0xff, 0xff]), Ok((-1.0f64, 3)));
+        assert_eq!(from_slice(&[0xD2, 0xff, 0xff, 0xff, 0xff]), Ok((-1.0f64, 5)));
+        assert_eq!(from_slice(&[0xD3, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), Ok((-1.0f64, 9)));
+
+        assert_eq!(from_slice(&[5]), Ok((5.0f32, 1)));
+        assert_eq!(from_slice(&[0xCC, 1]), Ok((1.0f32, 2)));
+        assert_eq!(from_slice(&[0xCD, 0, 1]), Ok((1.0f32, 3)));
+        assert_eq!(from_slice(&[0xCE, 0, 0, 0, 1]), Ok((1.0f32, 5)));
+        assert_eq!(from_slice(&[0xCF, 0, 0, 0, 0, 0, 0, 0, 1]), Ok((1.0f32, 9)));
+        assert_eq!(from_slice(&[0xD0, 0xff]), Ok((-1.0f32, 2)));
+        assert_eq!(from_slice(&[0xD1, 0xff, 0xff]), Ok((-1.0f32, 3)));
+        assert_eq!(from_slice(&[0xD2, 0xff, 0xff, 0xff, 0xff]), Ok((-1.0f32, 5)));
+        assert_eq!(from_slice(&[0xD3, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), Ok((-1.0f32, 9)));
+
+        let mut input = [0xCA, 0, 0, 0, 0];
+        input[1..].copy_from_slice(&(-2.5f32).to_be_bytes());
+        assert_eq!(from_slice(&input), Ok((-2.5, 5)));
+        assert_eq!(from_slice(&input), Ok((-2.5f32, 5)));
+        let mut input = [0xCB, 0, 0, 0, 0, 0, 0, 0, 0];
+        input[1..].copy_from_slice(&(-999.9f64).to_be_bytes());
+        assert_eq!(from_slice(&input), Ok((-999.9, 9)));
+        assert_eq!(from_slice(&input), Ok((-999.9f32, 9)));
+        let (f, len) = from_slice::<f32>(&[0xC0]).unwrap();
+        assert_eq!(len, 1);
+        assert!(f.is_nan());
+        let (f, len) = from_slice::<f64>(&[0xC0]).unwrap();
+        assert_eq!(len, 1);
+        assert!(f.is_nan());
+        assert!(from_slice::<f32>(&[0xc1]).is_err());
+        assert!(from_slice::<f64>(&[0x90]).is_err());
+    }
+
+    #[test]
+    fn test_de_integer() {
+        macro_rules! test_integer {
+            ($($ty:ty),*) => {$(
+                assert_eq!(from_slice::<$ty>(&[1]), Ok((1, 1)));
+                assert_eq!(from_slice::<$ty>(&[-1i8 as _]), Ok((-1, 1)));
+                assert_eq!(from_slice::<$ty>(&[0xCC, 1]), Ok((1, 2)));
+                assert_eq!(from_slice::<$ty>(&[0xCD, 0, 1]), Ok((1, 3)));
+                assert_eq!(from_slice::<$ty>(&[0xCE, 0, 0, 0, 1]), Ok((1, 5)));
+                assert_eq!(from_slice::<$ty>(&[0xCF, 0, 0, 0, 0, 0, 0, 0, 1]), Ok((1, 9)));
+                assert_eq!(from_slice::<$ty>(&[0xD0, 0xff]), Ok((-1, 2)));
+                assert_eq!(from_slice::<$ty>(&[0xD1, 0xff, 0xff]), Ok((-1, 3)));
+                assert_eq!(from_slice::<$ty>(&[0xD2, 0xff, 0xff, 0xff, 0xff]), Ok((-1, 5)));
+                assert_eq!(from_slice::<$ty>(&[0xD3, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), Ok((-1, 9)));
+                assert_eq!(from_slice::<$ty>(&[0xC0]), Err(Error::ExpectedInteger));
+            )*};
+        }
+        macro_rules! test_unsigned {
+            ($($ty:ty),*) => {$(
+                assert_eq!(from_slice::<$ty>(&[1]), Ok((1, 1)));
+                assert_eq!(from_slice::<$ty>(&[-1i8 as _]), Err(Error::InvalidInteger));
+                assert_eq!(from_slice::<$ty>(&[0xCC, 1]), Ok((1, 2)));
+                assert_eq!(from_slice::<$ty>(&[0xCD, 0, 1]), Ok((1, 3)));
+                assert_eq!(from_slice::<$ty>(&[0xCE, 0, 0, 0, 1]), Ok((1, 5)));
+                assert_eq!(from_slice::<$ty>(&[0xCF, 0, 0, 0, 0, 0, 0, 0, 1]), Ok((1, 9)));
+                assert_eq!(from_slice::<$ty>(&[0xD0, 1]), Ok((1, 2)));
+                assert_eq!(from_slice::<$ty>(&[0xD0, 0xff]), Err(Error::InvalidInteger));
+                assert_eq!(from_slice::<$ty>(&[0xD1, 0, 1]), Ok((1, 3)));
+                assert_eq!(from_slice::<$ty>(&[0xD1, 0xff, 0xff]), Err(Error::InvalidInteger));
+                assert_eq!(from_slice::<$ty>(&[0xD2, 0, 0, 0, 1]), Ok((1, 5)));
+                assert_eq!(from_slice::<$ty>(&[0xD2, 0xff, 0xff, 0xff, 0xff]), Err(Error::InvalidInteger));
+                assert_eq!(from_slice::<$ty>(&[0xD3, 0, 0, 0, 0, 0, 0, 0, 1]), Ok((1, 9)));
+                assert_eq!(from_slice::<$ty>(&[0xD3, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), Err(Error::InvalidInteger));
+                assert_eq!(from_slice::<$ty>(&[0xC0]), Err(Error::ExpectedInteger));
+            )*};
+        }
+        test_integer!(i8,i16,i32,i64);
+        test_unsigned!(u8,u16,u32,u64);
+    }
+
+    #[test]
+    fn test_de_str() {
+        assert_eq!(from_slice(&[0xA0]), Ok(("", 1)));
+        assert_eq!(from_slice(&[0xD9,0]), Ok(("", 2)));
+        assert_eq!(from_slice(&[0xDA,0,0]), Ok(("", 3)));
+        assert_eq!(from_slice(&[0xDB,0,0,0,0]), Ok(("", 5)));
+        assert_eq!(from_slice(&[0xA4,0xf0,0x9f,0x91,0x8f]), Ok(("👏", 5)));
+        assert_eq!(from_slice(&[0xD9,4,0xf0,0x9f,0x91,0x8f]), Ok(("👏", 6)));
+        assert_eq!(from_slice(&[0xDA,0,4,0xf0,0x9f,0x91,0x8f]), Ok(("👏", 7)));
+        assert_eq!(from_slice(&[0xDB,0,0,0,4,0xf0,0x9f,0x91,0x8f]), Ok(("👏", 9)));
+        assert_eq!(from_slice(b"\xBF01234567890ABCDEFGHIJKLMNOPQRST"),
+                   Ok(("01234567890ABCDEFGHIJKLMNOPQRST", 32)));
+        let text = "O, mógłże sęp chlań wyjść furtką bździn";
+        let mut input = [0u8;50];
+        input[..2].copy_from_slice(&[0xd9, text.len() as u8]);
+        input[2..].copy_from_slice(text.as_bytes());
+        assert_eq!(from_slice(&input), Ok((text, 50)));
+        // errors
+        assert_eq!(from_slice::<&str>(&[0xC4]), Err(Error::ExpectedString));
+    }
+
+    #[test]
+    fn test_de_bytes() {
+        assert_eq!(from_slice::<&[u8]>(&[0xC4,0]), Ok((&[][..], 2)));
+        assert_eq!(from_slice::<&[u8]>(&[0xC5,0,0]), Ok((&[][..], 3)));
+        assert_eq!(from_slice::<&[u8]>(&[0xC6,0,0,0,0]), Ok((&[][..], 5)));
+        assert_eq!(from_slice::<&[u8]>(&[0xC4,1,0xff]), Ok((&[0xff][..], 3)));
+        assert_eq!(from_slice::<&[u8]>(&[0xC5,0,1,0xff]), Ok((&[0xff][..], 4)));
+        assert_eq!(from_slice::<&[u8]>(&[0xC6,0,0,0,1,0xff]), Ok((&[0xff][..], 6)));
+        assert_eq!(from_slice::<&[u8]>(&[0xA0]), Err(Error::ExpectedBin));
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    enum Type {
+        #[serde(rename = "boolean")]
+        Boolean,
+        #[serde(rename = "number")]
+        Number,
+        #[serde(rename = "thing")]
+        Thing,
+    }
+
+    #[test]
+    fn test_de_enum_clike() {
+        assert_eq!(from_slice(b"\xA7boolean"), Ok((Type::Boolean, 8)));
+        assert_eq!(from_slice(b"\xA6number"), Ok((Type::Number, 7)));
+        assert_eq!(from_slice(b"\xA5thing"), Ok((Type::Thing, 6)));
+
+        assert_eq!(from_slice(b"\x00"), Ok((Type::Boolean, 1)));
+        assert_eq!(from_slice(b"\x01"), Ok((Type::Number, 1)));
+        assert_eq!(from_slice(b"\x02"), Ok((Type::Thing, 1)));
+
+        #[cfg(any(feature = "std", feature = "alloc"))]
+        assert_eq!(from_slice::<Type>(b"\xA0"), Err(Error::DeserializeError(
+            r#"unknown variant ``, expected one of `boolean`, `number`, `thing`"#.into())));
+        #[cfg(not(any(feature = "std", feature = "alloc")))]
+        assert_eq!(from_slice::<Type>(b"\xA0"), Err(Error::DeserializeError));
+
+        #[cfg(any(feature = "std", feature = "alloc"))]
+        assert_eq!(from_slice::<Type>(b"\xA3xyz"), Err(Error::DeserializeError(
+            r#"unknown variant `xyz`, expected one of `boolean`, `number`, `thing`"#.into())));
+        #[cfg(not(any(feature = "std", feature = "alloc")))]
+        assert_eq!(from_slice::<Type>(b"\xA3xyz"), Err(Error::DeserializeError));
+
+        #[cfg(any(feature = "std", feature = "alloc"))]
+        assert_eq!(from_slice::<Type>(b"\x03"), Err(Error::DeserializeError(
+            r#"invalid value: integer `3`, expected variant index 0 <= i < 3"#.into())));
+        #[cfg(not(any(feature = "std", feature = "alloc")))]
+        assert_eq!(from_slice::<Type>(b"\x03"), Err(Error::DeserializeError));
+        assert_eq!(from_slice::<Type>(&[0xC0]), Err(Error::ExpectedIdentifier));
+        assert_eq!(from_slice::<Type>(&[0x80]), Err(Error::ExpectedIdentifier));
+        assert_eq!(from_slice::<Type>(&[0x90]), Err(Error::ExpectedIdentifier));
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn test_de_map() {
+        use std::collections::HashMap;
+        let (map, len) = from_slice::<HashMap<i32,&str>>(
+            b"\x83\xff\xA1A\xfe\xA3wee\xD1\x01\xA4\xD9\x24Waltz, bad nymph, for quick jigs vex").unwrap();
+        assert_eq!(len, 50);
+        assert_eq!(map.len(), 3);
+        assert_eq!(map[&-1], "A");
+        assert_eq!(map[&-2], "wee");
+        assert_eq!(map[&420], "Waltz, bad nymph, for quick jigs vex");
+
+        let (map, len) = from_slice::<HashMap<i32,bool>>(
+            b"\x8F\x01\xC3\x02\xC3\x03\xC3\x04\xC3\x05\xC3\x06\xC3\x07\xC3\x08\xC3\x09\xC3\x0A\xC3\x0B\xC3\x0C\xC3\x0D\xC3\x0E\xC3\x0F\xC3").unwrap();
+        assert_eq!(len, 31);
+        assert_eq!(map.len(), 15);
+        for i in 1..=15 {
+            assert_eq!(map[&i], true);
+        }
+    }
+
+    #[test]
+    fn test_de_struct() {
+        #[derive(Default, Debug, Deserialize, PartialEq)]
+        #[serde(default)]
+        struct Test<'a> {
+            foo: i8,
+            bar: &'a str
+        }
+        assert_eq!(
+            from_slice(&[0x82,
+                0xA3, b'f', b'o', b'o', 0xff,
+                0xA3, b'b', b'a', b'r', 0xA3, b'b', b'a', b'z']),
+            Ok((Test { foo: -1, bar: "baz" }, 14))
+        );
+        assert_eq!(
+            from_slice(&[0xDE,0x00,0x02,
+                0xD9,0x03, b'f', b'o', b'o', 0xff,
+                0xDA,0x00,0x03, b'b', b'a', b'r', 0xDB, 0x00, 0x00, 0x00, 0x03, b'b', b'a', b'z']),
+            Ok((Test { foo: -1, bar: "baz" }, 23))
+        );
+        assert_eq!(
+            from_slice(&[0xDF,0x00,0x00,0x00,0x02,
+                0xD9,0x03, b'f', b'o', b'o', 0xff,
+                0xDA,0x00,0x03, b'b', b'a', b'r', 0xDB, 0x00, 0x00, 0x00, 0x03, b'b', b'a', b'z']),
+            Ok((Test { foo: -1, bar: "baz" }, 25))
+        );
+
+        assert_eq!(
+            from_slice(&[0x82,
+                0x00, 0xff,
+                0x01, 0xA3, b'b', b'a', b'z']),
+            Ok((Test { foo: -1, bar: "baz" }, 8))
+        );
+
+        assert_eq!(
+            from_slice(&[0x92, 0xff, 0xA3, b'b', b'a', b'z']),
+            Ok((Test { foo: -1, bar: "baz" }, 6))
+        );
+        assert_eq!(
+            from_slice(&[0xDC,0x00,0x02, 0xff, 0xD9,0x03, b'b', b'a', b'z']),
+            Ok((Test { foo: -1, bar: "baz" }, 9))
+        );
+        assert_eq!(
+            from_slice(&[0xDD,0x00,0x00,0x00,0x02, 0xff, 0xDB, 0x00, 0x00, 0x00, 0x03, b'b', b'a', b'z']),
+            Ok((Test { foo: -1, bar: "baz" }, 14))
+        );
+
+        // error
+        assert_eq!(
+            from_slice::<Test>(&[0x93, 0xff, 0xA3, b'b', b'a', b'z', 0xC0]),
+                Err(Error::TrailingElements));
+
+        #[cfg(any(feature = "std", feature = "alloc"))]
+        assert_eq!(
+            from_slice::<Test>(&[0x84,
+                0x00, 0xff,
+                0x01, 0xA3, b'b', b'a', b'z',
+                0x02, 0xC0,
+                0xA3, b'f', b'o', b'o', 0x01]),
+            Err(Error::DeserializeError("duplicate field `foo`".into()))
+        );
+        #[cfg(not(any(feature = "std", feature = "alloc")))]
+        assert_eq!(
+            from_slice::<Test>(&[0x84,
+                0x00, 0xff,
+                0x01, 0xA3, b'b', b'a', b'z',
+                0x02, 0xC0,
+                0xA3, b'f', b'o', b'o', 0x01]),
+            Err(Error::DeserializeError)
+        );
+    }
+
+
+    #[test]
+    fn test_de_struct_bool() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Led {
+            led: bool,
+        }
+
+        assert_eq!(
+            from_slice(b"\x81\xA3led\xC3"),
+            Ok((Led { led: true }, 6)));
+        assert_eq!(
+            from_slice(b"\x81\x00\xC3"),
+            Ok((Led { led: true }, 3)));
+        assert_eq!(
+            from_slice(b"\x91\xC3"),
+            Ok((Led { led: true }, 2)));
+        assert_eq!(
+            from_slice(b"\x81\xA3led\xC2"),
+            Ok((Led { led: false }, 6)));
+        assert_eq!(
+            from_slice(b"\x81\x00\xC2"),
+            Ok((Led { led: false }, 3)));
+        assert_eq!(
+            from_slice(b"\x91\xC2"),
+            Ok((Led { led: false }, 2)));
+    }
+
+    #[test]
+    fn test_de_struct_i8() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Temperature {
+            temperature: i8,
+        }
+
+        assert_eq!(
+            from_slice(b"\x81\xABtemperature\xEF"),
+            Ok((Temperature { temperature: -17 }, 14)));
+        assert_eq!(
+            from_slice(b"\x81\x00\xEF"),
+            Ok((Temperature { temperature: -17 }, 3)));
+        assert_eq!(
+            from_slice(b"\x91\xEF"),
+            Ok((Temperature { temperature: -17 }, 2)));
+        // out of range
+        assert_eq!(
+            from_slice::<Temperature>(b"\x81\xABtemperature\xCC\x80"),
+            Err(Error::InvalidInteger));
+        assert_eq!(
+            from_slice::<Temperature>(b"\x91\xD1\xff\x00"),
+            Err(Error::InvalidInteger));
+        // errors
+        assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xCA\x00\x00\x00\x00"), Err(Error::ExpectedInteger));
+        assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xC0"), Err(Error::ExpectedInteger));
+        assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xC2"), Err(Error::ExpectedInteger));
+    }
+
+    #[test]
+    fn test_de_struct_u8() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Temperature {
+            temperature: u8,
+        }
+
+        assert_eq!(
+            from_slice(b"\x81\xABtemperature\x14"),
+            Ok((Temperature { temperature: 20 }, 14)));
+        assert_eq!(
+            from_slice(b"\x81\x00\x14"),
+            Ok((Temperature { temperature: 20 }, 3)));
+        assert_eq!(
+            from_slice(b"\x91\x14"),
+            Ok((Temperature { temperature: 20 }, 2)));
+        // out of range
+        assert_eq!(
+            from_slice::<Temperature>(b"\x81\xABtemperature\xCD\x01\x00"),
+            Err(Error::InvalidInteger));
+        assert_eq!(
+            from_slice::<Temperature>(b"\x91\xff"),
+            Err(Error::InvalidInteger));
+        // errors
+        assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xCA\x00\x00\x00\x00"), Err(Error::ExpectedInteger));
+        assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xC0"), Err(Error::ExpectedInteger));
+        assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xC2"), Err(Error::ExpectedInteger));
+    }
+
+    #[test]
+    fn test_de_struct_f32() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Temperature {
+            temperature: f32,
+        }
+
+        assert_eq!(
+            from_slice(b"\x81\xABtemperature\xEF"),
+            Ok((Temperature { temperature: -17.0 }, 14)));
+        assert_eq!(
+            from_slice(b"\x81\x00\xEF"),
+            Ok((Temperature { temperature: -17.0 }, 3)));
+        assert_eq!(
+            from_slice(b"\x91\xEF"),
+            Ok((Temperature { temperature: -17.0 }, 2)));
+
+        assert_eq!(
+            from_slice(b"\x81\xABtemperature\xCA\xc1\x89\x99\x9a"),
+            Ok((Temperature { temperature: -17.2 }, 18))
+        );
+        assert_eq!(
+            from_slice(b"\x91\xCB\xBF\x61\x34\x04\xEA\x4A\x8C\x15"),
+            Ok((Temperature {temperature: -2.1e-3}, 10))
+        );
+        // NaNs will always compare unequal.
+        let (r, n): (Temperature, usize) = from_slice(b"\x81\xABtemperature\xC0").unwrap();
+        assert!(r.temperature.is_nan());
+        assert_eq!(n, 14);
+        // error
+        assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xC2"), Err(Error::ExpectedNumber));
+    }
+
+    #[test]
+    fn test_de_struct_option() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Property<'a> {
+            #[serde(borrow)]
+            description: Option<&'a str>,
+        }
+        assert_eq!(
+            from_slice(b"\x81\xABdescription\xBDAn ambient temperature sensor"),
+            Ok((Property {description: Some("An ambient temperature sensor")}, 43)));
+        assert_eq!(
+            from_slice(b"\x81\x00\xBDAn ambient temperature sensor"),
+            Ok((Property {description: Some("An ambient temperature sensor")}, 32)));
+        assert_eq!(
+            from_slice(b"\x91\xBDAn ambient temperature sensor"),
+            Ok((Property {description: Some("An ambient temperature sensor")}, 31)));
+
+        assert_eq!(
+            from_slice(b"\x81\xABdescription\xC0"),
+            Ok((Property { description: None }, 14)));
+        assert_eq!(
+            from_slice(b"\x81\x00\xC0"),
+            Ok((Property { description: None }, 3)));
+        assert_eq!(
+            from_slice(b"\x91\xC0"),
+            Ok((Property { description: None }, 2)));
+    }
+
+    #[test]
+    fn test_de_test_unit() {
+        assert_eq!(from_slice(&[0xC0]), Ok(((), 1)));
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Unit;
+        assert_eq!(from_slice(&[0xC0]), Ok((Unit, 1)));
+    }
+
+    #[test]
+    fn test_de_newtype_struct() {
+        #[derive(Deserialize, Debug, PartialEq, Clone, Copy)]
+        struct A(u32);
+
+        let a = A(54);
+        assert_eq!(from_slice(&[54]), Ok((a, 1)));
+        assert_eq!(from_slice(&[0xCC, 54]), Ok((a, 2)));
+        assert_eq!(from_slice(&[0xCD, 0, 54]), Ok((a, 3)));
+        assert_eq!(from_slice(&[0xCE, 0, 0, 0, 54]), Ok((a, 5)));
+        assert_eq!(from_slice(&[0xCF, 0, 0, 0, 0, 0, 0, 0, 54]), Ok((a, 9)));
+        assert_eq!(from_slice(&[0xD0, 54]), Ok((a, 2)));
+        assert_eq!(from_slice(&[0xD1, 0, 54]), Ok((a, 3)));
+        assert_eq!(from_slice(&[0xD2, 0, 0, 0, 54]), Ok((a, 5)));
+        assert_eq!(from_slice(&[0xD3, 0, 0, 0, 0, 0, 0, 0, 54]), Ok((a, 9)));
+        assert_eq!(from_slice::<A>(&[0xCA, 0x42, 0x58, 0, 0]), Err(Error::ExpectedInteger));
+        assert_eq!(from_slice::<A>(&[0xCB, 0x40, 0x4B, 0, 0, 0, 0, 0, 0]), Err(Error::ExpectedInteger));
+
+        #[derive(Deserialize, Debug, PartialEq, Clone, Copy)]
+        struct B(f32);
+
+        let b = B(54.0);
+        assert_eq!(from_slice(&[54]), Ok((b, 1)));
+        assert_eq!(from_slice(&[0xCC, 54]), Ok((b, 2)));
+        assert_eq!(from_slice(&[0xCD, 0, 54]), Ok((b, 3)));
+        assert_eq!(from_slice(&[0xCE, 0, 0, 0, 54]), Ok((b, 5)));
+        assert_eq!(from_slice(&[0xCF, 0, 0, 0, 0, 0, 0, 0, 54]), Ok((b, 9)));
+        assert_eq!(from_slice(&[0xD0, 54]), Ok((b, 2)));
+        assert_eq!(from_slice(&[0xD1, 0, 54]), Ok((b, 3)));
+        assert_eq!(from_slice(&[0xD2, 0, 0, 0, 54]), Ok((b, 5)));
+        assert_eq!(from_slice(&[0xD3, 0, 0, 0, 0, 0, 0, 0, 54]), Ok((b, 9)));
+        assert_eq!(from_slice(&[0xCA, 0x42, 0x58, 0, 0]), Ok((b, 5)));
+        assert_eq!(from_slice(&[0xCB, 0x40, 0x4B, 0, 0, 0, 0, 0, 0]), Ok((b, 9)));
+    }
+
+    #[test]
+    fn test_de_newtype_variant() {
+        #[derive(Deserialize, Debug, PartialEq, Clone, Copy)]
+        enum A {
+            A(u32),
+        }
+        let a = A::A(54);
+        assert_eq!(from_slice::<A>(&[0x81,0xA1,b'A',54]), Ok((a, 4)));
+        assert_eq!(from_slice::<A>(&[0x81,0x00,54]), Ok((a, 3)));
+        assert_eq!(from_slice::<A>(&[0x00]), Err(Error::InvalidType));
+    }
+
+    #[test]
+    fn test_de_struct_variant() {
+        #[derive(Deserialize, Debug, PartialEq, Clone, Copy)]
+        enum A {
+            A { x: u32, y: u16 },
+        }
+        let a = A::A { x: 54, y: 720 };
+        assert_eq!(from_slice(&[0x81,0xA1,b'A', 0x82, 0xA1,b'x',54, 0xA1,b'y',0xCD,2,208]), Ok((a, 12)));
+        assert_eq!(from_slice(&[0x81,0x00, 0x82, 0xA1,b'x',54, 0xA1,b'y',0xCD,2,208]), Ok((a, 11)));
+        assert_eq!(from_slice(&[0x81,0xA1,b'A', 0x82, 0x00,54, 0x01,0xCD,2,208]), Ok((a, 10)));
+        assert_eq!(from_slice(&[0x81,0x00, 0x82, 0x00,54, 0x01,0xCD,2,208]), Ok((a, 9)));
+        assert_eq!(from_slice(&[0x81,0xA1,b'A', 0x92 ,54, 0xCD,2,208]), Ok((a, 8)));
+        assert_eq!(from_slice(&[0x81,0x00, 0x92 ,54, 0xCD,2,208]), Ok((a, 7)));
+        // error
+        assert_eq!(from_slice::<A>(&[0x81,0xA1,b'A', 0x93 ,54, 0xCD,2,208, 0xC0]), Err(Error::TrailingElements));
+        assert_eq!(from_slice::<A>(&[0x81,0x00, 0x93 ,54, 0xCD,2,208, 0xC0]), Err(Error::TrailingElements));
+    }
+
+    #[test]
+    fn test_de_struct_tuple() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Xy(u8, i8);
+
+        assert_eq!(from_slice(&[0x92,10,20]), Ok((Xy(10, 20), 3)));
+        assert_eq!(from_slice(&[0x92,0xCC,200,-20i8 as _]), Ok((Xy(200, -20), 4)));
+        assert_eq!(from_slice(&[0x92,10,0xD0,-77i8 as _]), Ok((Xy(10, -77), 4)));
+        assert_eq!(from_slice(&[0x92,0xCC,200,0xD0,-77i8 as _]), Ok((Xy(200, -77), 5)));
+
+        // wrong number of args
+        #[cfg(any(feature = "std", feature = "alloc"))]
+        assert_eq!(
+            from_slice::<Xy>(&[0x91,0x10]),
+            Err(Error::DeserializeError(
+                r#"invalid length 1, expected tuple struct Xy with 2 elements"#.to_string()))
+        );
+        #[cfg(not(any(feature = "std", feature = "alloc")))]
+        assert_eq!(
+            from_slice::<Xy>(&[0x91,0x10]),
+            Err(Error::DeserializeError)
+        );
+        assert_eq!(
+            from_slice::<Xy>(&[0x93,10,20,30]),
+            Err(Error::TrailingElements)
+        );
+    }
+
+    #[test]
+    fn test_de_struct_with_array_field() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Test {
+            status: bool,
+            point: [u32; 3],
+        }
+
+        assert_eq!(
+            from_slice(b"\x82\xA6status\xC3\xA5point\x93\x01\x02\x03"),
+            Ok((
+                Test {
+                    status: true,
+                    point: [1, 2, 3]
+                },
+                19
+            ))
+        );
+        assert_eq!(
+            from_slice(b"\x82\x00\xC3\x01\x93\x01\x02\x03"),
+            Ok((
+                Test {
+                    status: true,
+                    point: [1, 2, 3]
+                },
+                8
+            ))
+        );
+        assert_eq!(
+            from_slice(b"\x92\xC3\x93\x01\x02\x03"),
+            Ok((
+                Test {
+                    status: true,
+                    point: [1, 2, 3]
+                },
+                6
+            ))
+        );
+    }
+
+    #[test]
+    fn test_de_struct_with_tuple_field() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Test {
+            status: bool,
+            point: (u32, u32, u32),
+        }
+
+        assert_eq!(
+            from_slice(b"\x82\xA6status\xC3\xA5point\x93\x01\x02\x03"),
+            Ok((
+                Test {
+                    status: true,
+                    point: (1, 2, 3)
+                },
+                19
+            ))
+        );
+        assert_eq!(
+            from_slice(b"\x82\x00\xC3\x01\x93\x01\x02\x03"),
+            Ok((
+                Test {
+                    status: true,
+                    point: (1, 2, 3)
+                },
+                8
+            ))
+        );
+        assert_eq!(
+            from_slice(b"\x92\xC3\x93\x01\x02\x03"),
+            Ok((
+                Test {
+                    status: true,
+                    point: (1, 2, 3)
+                },
+                6
+            ))
+        );
+    }
+
+    #[test]
+    fn test_de_streaming() {
+        let test = Test {
+            compact: true,
+            schema: 0,
+            unit: Unit
+        };
+        let input = b"\xC0\xC2\x00\xA3ABC\xC4\x04_xyz\x83\xA7compact\xC3\xA6schema\x00\xA4unit\xC0\x93\x01\x02\x03\xC0";
+        let (res, input) = from_slice_split_tail::<()>(input).unwrap();
+        assert_eq!(res, ());
+        let (res, input) = from_slice_split_tail::<bool>(input).unwrap();
+        assert_eq!(res, false);
+        let (res, input) = from_slice_split_tail::<i8>(input).unwrap();
+        assert_eq!(res, 0);
+        let (res, input) = from_slice_split_tail::<&str>(input).unwrap();
+        assert_eq!(res, "ABC");
+        let (res, input) = from_slice_split_tail::<&[u8]>(input).unwrap();
+        assert_eq!(res, b"_xyz");
+        let (res, input) = from_slice_split_tail::<Test>(input).unwrap();
+        assert_eq!(res, test);
+        let (res, input) = from_slice_split_tail::<[u32;3]>(input).unwrap();
+        assert_eq!(res, [1,2,3]);
+        let (res, input) = from_slice_split_tail::<Option<()>>(input).unwrap();
+        assert_eq!(res, None);
+        assert_eq!(input, b"");
+        // error
+        assert_eq!(from_slice_split_tail::<()>(input), Err(Error::UnexpectedEof));
     }
 }

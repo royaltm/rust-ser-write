@@ -35,6 +35,7 @@ mod magick {
     pub const FIXINT_I32: RangeInclusive<i32> = MIN_NEGFIXINT as i32..=MAX_POSFIXINT as i32;
     pub const FIXINT_I64: RangeInclusive<i64> = MIN_NEGFIXINT as i64..=MAX_POSFIXINT as i64;
     pub const NIL: u8      = 0xc0;
+    pub const RESERVED: u8 = 0xc1;
     pub const FALSE: u8    = 0xc2;
     pub const TRUE: u8     = 0xc3;
 

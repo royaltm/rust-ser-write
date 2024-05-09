@@ -846,7 +846,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_msgpack() {
+    fn test_ser_msgpack() {
         #[derive(Serialize)]
         enum Flavors {
             Vanilla,
