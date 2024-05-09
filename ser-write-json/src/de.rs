@@ -1,15 +1,18 @@
 //! JSON serde deserializer
-use core::cell::Cell;
-// use std::println;
+use std::println;
+#[cfg(feature = "std")]
+use std::{string::ToString};
 
-use serde::forward_to_deserialize_any;
-use serde::de::{SeqAccess, MapAccess, DeserializeSeed};
+#[cfg(all(feature = "alloc",not(feature = "std")))]
+use alloc::{string::ToString};
+
+use core::cell::Cell;
 use core::ops::Neg;
 use core::slice::from_raw_parts_mut;
 use core::str::{Utf8Error, FromStr};
 use core::{fmt, str};
-
-use serde::de::{self, Visitor};
+use serde::forward_to_deserialize_any;
+use serde::de::{self, Visitor, SeqAccess, MapAccess, DeserializeSeed};
 
 /// JSON deserializer with bytes deserialized from JSON strings (with unescaping)
 /// without any additional decoding
@@ -94,9 +97,6 @@ pub fn from_mut_slice_base64_bytes<'a, T>(v: &'a mut [u8]) -> Result<T>
     from_mut_slice_with_decoder::<StringByteBase64Decoder, _>(v)
 }
 
-/// Deserialization result
-pub type Result<T> = core::result::Result<T, Error>;
-
 /// Serde JSON deserializer.
 ///
 /// `P` must implement [`StringByteDecoder`].
@@ -106,28 +106,26 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// * decodes strings into bytes in-place,
 /// * deserializes borrowed references to `&str` and `&[u8]` types,
 /// * deserializes bytes from arrays of numbers,
-/// * deserializes bytes from strings using `P` as a string decoder.
+/// * deserializes bytes from strings using `P` as a string decoder,
+/// * deserializes structs from JSON objects or arrays.
 pub struct Deserializer<'de, P> {
     input: &'de mut[u8],
     index: usize,
     _parser: core::marker::PhantomData<P>
 }
 
-impl From<Utf8Error> for Error {
-    fn from(_err: Utf8Error) -> Self {
-        Error::InvalidUnicodeCodePoint
-    }
-}
+/// Deserialization result
+pub type Result<T> = core::result::Result<T, Error>;
 
 /// Deserialization error
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 #[non_exhaustive]
 pub enum Error {
     /// EOF while parsing
     UnexpectedEof,
-    /// Invalid escape sequence
+    /// Invalid JSON string escape sequence
     InvalidEscapeSequence,
-    /// A control ASCII character detected in a string
+    /// A control ASCII character detected in a JSON input
     StringControlChar,
     /// Expected this character to be a `':'`.
     ExpectedColon,
@@ -155,43 +153,47 @@ pub enum Error {
     ExpectedArray,
     /// Expected object
     ExpectedObject,
-
-    /// Expected this character to start a JSON value.
+    /// Expected object or array
+    ExpectedStruct,
+    /// Expected this character to start an enum variant.
     ExpectedEnumValue,
-
     /// Expected this character to be `'}'`.
     ExpectedEnumObjectEnd,
-
     /// Invalid number
     InvalidNumber,
-
     /// Invalid type
     InvalidType,
-
     /// Invalid unicode code point
     InvalidUnicodeCodePoint,
-
-    /// Object key is not a string.
+    /// Object key is not a string
     KeyMustBeAString,
-
-    /// JSON has non-whitespace trailing characters after the value.
+    /// JSON has non-whitespace trailing characters after the value
     TrailingCharacters,
-
     /// Unexpected character
     UnexpectedChar,
-
     /// Invalid length
     InvalidLength,
-
-    /// Error with a custom message that we had to discard.
-    CustomError
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    /// An error passed down from a [`serde::de::Deserialize`] implementation
+    DeserializeError(std::string::String),
+    #[cfg(not(any(feature = "std", feature = "alloc")))]
+    DeserializeError
 }
 
 impl serde::de::StdError for Error {}
 
+#[cfg(any(feature = "std", feature = "alloc"))]
+impl de::Error for Error {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
+        Error::DeserializeError(msg.to_string())
+    }
+}
+
+#[cfg(not(any(feature = "std", feature = "alloc")))]
 impl de::Error for Error {
     fn custom<T: fmt::Display>(_msg: T) -> Self {
-        Error::CustomError
+        Error::DeserializeError
     }
 }
 
@@ -202,34 +204,43 @@ impl fmt::Display for Error {
             Error::InvalidEscapeSequence => "Invalid JSON string escape sequence",
             Error::StringControlChar => "A control ASCII character found in a JSON string",
             Error::ExpectedArrayCommaOrEnd => "Expected `','` or `']'`",
-            Error::LeadingArrayComma => "JSON array content starts with a leading `,`",
-            Error::TrailingArrayComma => "JSON array content ends with a trailing `,`",
+            Error::LeadingArrayComma => "JSON array content starts with a leading `','`",
+            Error::TrailingArrayComma => "JSON array content ends with a trailing `','`",
             Error::ExpectedObjectCommaOrEnd => "Expected `','` or `'}'`",
-            Error::LeadingObjectComma => "JSON object content starts with a leading `,`",
-            Error::TrailingObjectComma => "JSON object content ends with a trailing `,`",
+            Error::LeadingObjectComma => "JSON object content starts with a leading `','`",
+            Error::TrailingObjectComma => "JSON object content ends with a trailing `','`",
             Error::ExpectedColon => "Expected `':'`",
             Error::ExpectedToken => {
                 "Expected either `true`, `false`, or `null`."
             }
             Error::ExpectedNull => "Expected `null`",
-            Error::ExpectedString => r#"Expected `"`"#,
+            Error::ExpectedString => r#"Expected `'"'`"#,
             Error::ExpectedArrayEnd => "Expected ']'",
             Error::ExpectedArray => "Expeced a JSON array",
             Error::ExpectedObject => "Expected a JSON object",
-            Error::ExpectedEnumValue => "Expected this character to start a JSON value",
+            Error::ExpectedStruct => "Expected a JSON object or an array",
+            Error::ExpectedEnumValue => r#"Expected this character to be `'"'` or `'{'`"#,
             Error::ExpectedEnumObjectEnd => "Expected this character to be `'}'`",
-            Error::InvalidNumber => "Invalid number.",
+            Error::InvalidNumber => "Invalid number",
             Error::InvalidType => "Invalid type",
             Error::InvalidUnicodeCodePoint => "Invalid unicode code point",
-            Error::KeyMustBeAString => "Object key is not a string.",
+            Error::KeyMustBeAString => "Object key is not a string",
             Error::TrailingCharacters => {
-                "JSON has non-whitespace trailing characters after the value."
+                "JSON has non-whitespace trailing character after the value"
             }
             Error::UnexpectedChar => "Unexpected token while parsing a JSON value",
             Error::InvalidLength => "Invalid length",
-            Error::CustomError => "JSON does not match deserializer’s expected format.",
-            // _ => "Invalid JSON",
+            #[cfg(any(feature = "std", feature = "alloc"))]
+            Error::DeserializeError(s) => return write!(f, "{} while deserializing JSON", s),
+            #[cfg(not(any(feature = "std", feature = "alloc")))]
+            Error::DeserializeError => "JSON does not match deserializer’s expected format",
         })
+    }
+}
+
+impl From<Utf8Error> for Error {
+    fn from(_err: Utf8Error) -> Self {
+        Error::InvalidUnicodeCodePoint
     }
 }
 
@@ -1081,7 +1092,7 @@ impl<'de, 'a, P> de::Deserializer<'de> for &'a mut Deserializer<'de, P>
         match self.eat_whitespace()? {
             b'{' => self.deserialize_map(visitor),
             b'[' => self.deserialize_seq(visitor),
-            _ => Err(Error::ExpectedObject)
+            _ => Err(Error::ExpectedStruct)
         }
     }
 
@@ -1420,20 +1431,36 @@ mod tests {
 
         let mut vec = Vec::new();
         vec.extend_from_slice(b"[]");
-        let bytes: &[u8] = from_mut_slice_hex_bytes(&mut vec).unwrap();
+        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
         assert_eq!(bytes, []);
 
         vec.clear(); vec.extend_from_slice(br#""""#);
-        let bytes: &[u8] = from_mut_slice_hex_bytes(&mut vec).unwrap();
+        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
         assert_eq!(bytes, []);
 
+        vec.clear(); vec.extend_from_slice(br#""Hello!\r\n""#);
+        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        assert_eq!(bytes, b"Hello!\r\n");
+
         vec.clear(); vec.extend_from_slice(b"[0]");
-        let bytes: &[u8] = from_mut_slice_hex_bytes(&mut vec).unwrap();
+        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
         assert_eq!(bytes, [0]);
 
-        vec.clear(); vec.extend_from_slice(br#""FF""#);
+        vec.clear(); vec.extend_from_slice(b"[0,1 , 2 ]");
+        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        assert_eq!(bytes, [0,1,2]);
+
+        vec.clear(); vec.extend_from_slice(br#""Ff00ABab""#);
         let bytes: &[u8] = from_mut_slice_hex_bytes(&mut vec).unwrap();
-        assert_eq!(bytes, [255]);
+        assert_eq!(bytes, [0xff,0x00,0xab,0xab]);
+
+        vec.clear(); vec.extend_from_slice(br#""/wCrqw==""#);
+        let bytes: &[u8] = from_mut_slice_base64_bytes(&mut vec).unwrap();
+        assert_eq!(bytes, [0xff,0x00,0xab,0xab]);
+
+        vec.clear(); vec.extend_from_slice(br#""/wCrqw""#);
+        let bytes: &[u8] = from_mut_slice_base64_bytes(&mut vec).unwrap();
+        assert_eq!(bytes, [0xff,0x00,0xab,0xab]);
 
         vec.clear(); vec.extend_from_slice(b"");
         assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
@@ -1496,6 +1523,20 @@ mod tests {
         );
 
         vec.clear();
+        test.tail = Some(false);
+        let expected = br#"{"owned":"AAoLDA0ODxAREhP/","tail":false}"#;
+        crate::to_writer_base64_bytes(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
+        assert_eq!(from_mut_slice_base64_bytes::<Test>(&mut vec).unwrap(), test);
+
+        vec.clear();
+        vec.extend_from_slice(br#" { "tail" :true ,"owned": "ABCDefgh" } "#);
+        assert_eq!(
+            from_mut_slice_base64_bytes::<Test>(&mut vec).unwrap(),
+            Test { tail: Some(true), owned: Some(vec![0, 16, 131, 121, 248, 33]), ..Test::default() }
+        );
+
+        vec.clear();
         let mut test = Test { borrowed: Some(&[0,10,11,12,13,14,15,16,17,18,19,255]), ..Test::default() };
         let expected = br#"{"borrowed":[0,10,11,12,13,14,15,16,17,18,19,255]}"#;
         crate::to_writer(&mut vec, &test).unwrap();
@@ -1522,6 +1563,12 @@ mod tests {
         crate::to_writer_hex_bytes(&mut vec, &test).unwrap();
         assert_eq!(&vec, expected);
         assert_eq!(from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(), test);
+
+        vec.clear();
+        let expected = br#"{"borrowed":"AAoLDA0ODxAREhP/","tail":true}"#;
+        crate::to_writer_base64_bytes(&mut vec, &test).unwrap();
+        assert_eq!(&vec, expected);
+        assert_eq!(from_mut_slice_base64_bytes::<Test>(&mut vec).unwrap(), test);
 
         vec.clear();
         vec.extend_from_slice(br#" { "borrowed": [  ] , "tail" :  false ,  "owned"   :  "" }  "#);
@@ -1642,8 +1689,19 @@ mod tests {
         assert_eq!(from_str(r#" "boolean" "#), Ok((Type::Boolean, 11)));
         assert_eq!(from_str(r#" "number" "#), Ok((Type::Number, 10)));
         assert_eq!(from_str(r#" "thing" "#), Ok((Type::Thing, 9)));
-        assert_eq!(from_str::<Type>(r#" "" "#), Err(Error::CustomError));
-        assert_eq!(from_str::<Type>(r#" "xyz" "#), Err(Error::CustomError));
+
+        #[cfg(any(feature = "std", feature = "alloc"))]
+        assert_eq!(from_str::<Type>(r#" "" "#), Err(Error::DeserializeError(
+            r#"unknown variant ``, expected one of `boolean`, `number`, `thing`"#.to_string())));
+        #[cfg(not(any(feature = "std", feature = "alloc")))]
+        assert_eq!(from_str::<Type>(r#" "" "#), Err(Error::DeserializeError));
+
+        #[cfg(any(feature = "std", feature = "alloc"))]
+        assert_eq!(from_str::<Type>(r#" "xyz" "#), Err(Error::DeserializeError(
+            r#"unknown variant `xyz`, expected one of `boolean`, `number`, `thing`"#.to_string())));
+        #[cfg(not(any(feature = "std", feature = "alloc")))]
+        assert_eq!(from_str::<Type>(r#" "xyz" "#), Err(Error::DeserializeError));
+
         assert_eq!(from_str::<Type>(r#" {} "#), Err(Error::ExpectedString));
         assert_eq!(from_str::<Type>(r#" [] "#), Err(Error::ExpectedEnumValue));
     }
@@ -1700,22 +1758,48 @@ mod tests {
 
     #[test]
     fn test_de_struct() {
-        #[derive(Debug, Deserialize, PartialEq)]
+        #[derive(Default, Debug, Deserialize, PartialEq)]
+        #[serde(default)]
         struct Test {
             foo: i8,
+            bar: f64
         }
         assert_eq!(
-            from_str(r#"{ "foo": 0 }"#),
-            Ok((Test { foo: 0 }, 12))
+            from_str("{}"),
+            Ok((Test { foo: 0, bar: 0.0 }, 2))
         );
         assert_eq!(
-            from_str(r#"{"foo":-1}"#),
-            Ok((Test {foo:-1}, 10))
+            from_str(r#"{ "foo": 0 }"#),
+            Ok((Test { foo: 0, bar: 0.0 }, 12))
+        );
+        assert_eq!(
+            from_str(r#"{"bar":3.14,"foo":-1}"#),
+            Ok((Test {bar: 3.14, foo:-1}, 21))
+        );
+        assert_eq!(
+            from_str(r#" {
+                "bar" : -9.5e-10 ,
+                "foo" : -128
+            }"#),
+            Ok((Test {bar: -9.5e-10, foo:-128}, 80))
+        );
+        assert_eq!(
+            from_str(r#"[]"#),
+            Ok((Test {bar: 0.0, foo:0}, 2))
+        );
+        assert_eq!(
+            from_str(r#"[5]"#),
+            Ok((Test {foo:5, bar: 0.0}, 3))
+        );
+        assert_eq!(
+            from_str(r#"[5,999.9]"#),
+            Ok((Test {foo:5, bar: 999.9}, 9))
         );
         // errors
-        assert_eq!(from_str::<Test>("[]"), Err(Error::ExpectedObject));
+        assert_eq!(from_str::<Test>(r#""""#), Err(Error::ExpectedStruct));
         assert_eq!(from_str::<Test>(r#"{"foo":0]"#), Err(Error::ExpectedObjectCommaOrEnd));
         assert_eq!(from_str::<Test>(r#"{"foo":0,}"#), Err(Error::TrailingObjectComma));
+        assert_eq!(from_str::<Test>(r#"{"foo",0}"#), Err(Error::ExpectedColon));
         assert_eq!(from_str::<Test>(r#"{,}"#), Err(Error::LeadingObjectComma));
         assert_eq!(from_str::<Test>(r#"{,"foo":0}"#), Err(Error::LeadingObjectComma));
     }
@@ -1762,6 +1846,28 @@ mod tests {
         // out of range
         assert!(from_str::<Temperature>(r#"{ "temperature": 128 }"#).is_err());
         assert!(from_str::<Temperature>(r#"{ "temperature": -129 }"#).is_err());
+    }
+
+    #[test]
+    fn test_de_struct_u8() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Temperature {
+            temperature: u8,
+        }
+
+        assert_eq!(
+            from_str(r#"{ "temperature": 20 }"#),
+            Ok((Temperature { temperature: 20 }, 21))
+        );
+
+        assert_eq!(
+            from_str(r#"{ "temperature": 0 }"#),
+            Ok((Temperature { temperature: 0 }, 20))
+        );
+
+        // out of range
+        assert!(from_str::<Temperature>(r#"{ "temperature": 256 }"#).is_err());
+        assert!(from_str::<Temperature>(r#"{ "temperature": -1 }"#).is_err());
     }
 
     #[test]
@@ -1853,30 +1959,11 @@ mod tests {
     }
 
     #[test]
-    fn test_de_struct_u8() {
-        #[derive(Debug, Deserialize, PartialEq)]
-        struct Temperature {
-            temperature: u8,
-        }
-
-        assert_eq!(
-            from_str(r#"{ "temperature": 20 }"#),
-            Ok((Temperature { temperature: 20 }, 21))
-        );
-
-        assert_eq!(
-            from_str(r#"{ "temperature": 0 }"#),
-            Ok((Temperature { temperature: 0 }, 20))
-        );
-
-        // out of range
-        assert!(from_str::<Temperature>(r#"{ "temperature": 256 }"#).is_err());
-        assert!(from_str::<Temperature>(r#"{ "temperature": -1 }"#).is_err());
-    }
-
-    #[test]
     fn test_de_test_unit() {
-        assert_eq!(from_str::<()>(r#"null"#), Ok(((), 4)));
+        assert_eq!(from_str(r#"null"#), Ok(((), 4)));
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Unit;
+        assert_eq!(from_str(r#"null"#), Ok((Unit, 4)));
     }
 
     #[test]
@@ -1900,13 +1987,16 @@ mod tests {
 
     #[test]
     fn test_de_struct_variant() {
-        #[derive(Deserialize, Debug, PartialEq)]
+        #[derive(Deserialize, Debug, PartialEq, Clone, Copy)]
         enum A {
             A { x: u32, y: u16 },
         }
         let a = A::A { x: 54, y: 720 };
-        let x = from_str::<A>(r#"{"A": {"x":54,"y":720 } }"#);
-        assert_eq!(x, Ok((a, 25)));
+        let x = from_str::<A>(r#"{"A": {"x":54,"y":720 } }"#).unwrap();
+        assert_eq!(x, (a, 25));
+        let y = from_str::<A>(r#"{"A": [54,720] }"#).unwrap();
+        assert_eq!(y.0, x.0);
+        assert_eq!(y, (a, 16));
     }
 
     #[test]
@@ -1918,9 +2008,16 @@ mod tests {
         assert_eq!(from_str(r#"[10, -20]"#), Ok((Xy(10, -20), 9)));
 
         // wrong number of args
+        #[cfg(any(feature = "std", feature = "alloc"))]
         assert_eq!(
             from_str::<Xy>(r#"[10]"#),
-            Err(Error::CustomError)
+            Err(Error::DeserializeError(
+                r#"invalid length 1, expected tuple struct Xy with 2 elements"#.to_string()))
+        );
+        #[cfg(not(any(feature = "std", feature = "alloc")))]
+        assert_eq!(
+            from_str::<Xy>(r#"[10]"#),
+            Err(Error::DeserializeError)
         );
         assert_eq!(
             from_str::<Xy>(r#"[10, 20, 30]"#),
@@ -1930,21 +2027,24 @@ mod tests {
 
     #[test]
     fn test_de_struct_with_array_field() {
-        #[derive(Debug, Deserialize, PartialEq)]
+        #[derive(Debug, Deserialize, PartialEq, Clone, Copy)]
         struct Test {
             status: bool,
             point: [u32; 3],
         }
+        let test = Test {
+            status: true,
+            point: [1, 2, 3]
+        };
+        assert_eq!(
+            from_str(r#"{ "status": true,
+                          "point": [1, 2, 3] }"#),
+            Ok((test, 64))
+        );
 
         assert_eq!(
-            from_str(r#"{ "status": true, "point": [1, 2, 3] }"#),
-            Ok((
-                Test {
-                    status: true,
-                    point: [1, 2, 3]
-                },
-                38
-            ))
+            from_str(r#"{"status":true,"point":[1,2,3]}"#),
+            Ok((test, 31))
         );
     }
 

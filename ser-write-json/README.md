@@ -30,7 +30,7 @@ With any of the above features enabled additional `to_string...`  methods are pr
 Deserializer
 ------------
 
-The JSON deserializer expects a JSON encoded mutable slice of bytes. `&str` or `&[u8]` kind of types deserialize using (ZERO-COPY) references from the provided slice. The slice needs to be mutable so the decoder can unescape JSON strings and decode bytes from strings in various formats in-place.
+The JSON deserializer expects a JSON encoded mutable slice of bytes. `&str` or `&[u8]` types deserialize using (ZERO-COPY) references from the provided slice. The slice needs to be mutable so the decoder can unescape JSON strings and decode bytes from strings in various formats in-place.
 
 The JSON deserializer is available in 4 flavors depending on how do you want to handle types deserialized with `deserialize_bytes` method from JSON strings:
 
@@ -42,3 +42,5 @@ The JSON deserializer is available in 4 flavors depending on how do you want to 
 Deserializer can also deserialize bytes in-place from a JSON array of numbers regardless of the chosen implementation.
 
 Deserializer supports self-describing formats.
+
+Deserializer deserializes structs from both JSON objects or arrays.

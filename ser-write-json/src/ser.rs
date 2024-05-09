@@ -877,6 +877,31 @@ mod tests {
     }
 
     #[test]
+    fn test_json_struct_to_array() {
+        use serde::ser::SerializeSeq;
+        struct Test {
+            int: u32,
+            seq: Vec<&'static str>,
+        }
+        impl serde::Serialize for Test {
+            fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+                where S: serde::Serializer
+            {
+                let mut seq = serializer.serialize_seq(Some(2))?;
+                seq.serialize_element(&self.int)?;
+                seq.serialize_element(&self.seq)?;
+                seq.end()
+            }
+        }
+        let test = Test {
+            int: 1,
+            seq: vec!["a", "b"],
+        };
+        let expected = r#"[1,["a","b"]]"#;
+        assert_eq!(to_string(&test).unwrap(), expected);
+    }
+
+    #[test]
     fn test_json_enum() {
         #[derive(Serialize)]
         enum E {
@@ -1183,6 +1208,10 @@ mod tests {
     #[test]
     fn test_ser_unit() {
         let a = ();
+        assert_eq!(&*to_string(&a).unwrap(), r#"null"#);
+        #[derive(Serialize)]
+        struct Unit;
+        let a = Unit;
         assert_eq!(&*to_string(&a).unwrap(), r#"null"#);
     }
 
