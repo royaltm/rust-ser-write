@@ -1,7 +1,7 @@
 ser-write-json
 ==============
 
-This crate provides a `no_std` compact JSON serializer for [serde](https://crates.io/crates/serde) using `SerWrite` as a writer and a JSON deserializer for convenience.
+This crate provides a `no_std` compact [JSON](https://json.org) serializer for [serde](https://crates.io/crates/serde) using `SerWrite` as a writer and a deserializer for convenience.
 
 This crate has been in some parts derived from work of [serde-json-core](https://crates.io/crates/serde-json-core) and [serde_json](https://crates.io/crates/serde_json).
 
@@ -43,4 +43,4 @@ Deserializer can also deserialize bytes in-place from a JSON array of numbers re
 
 Deserializer supports self-describing formats.
 
-Deserializer deserializes structs from both JSON objects or arrays.
+Deserializer deserializes structs from both JSON objects and arrays.
