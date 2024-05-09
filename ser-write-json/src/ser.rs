@@ -4,10 +4,10 @@ use core::fmt;
 use core::mem::MaybeUninit;
 
 #[cfg(feature = "std")]
-use std::{vec::Vec, string::String};
+use std::{vec::Vec, string::{String, ToString}};
 
 #[cfg(all(feature = "alloc",not(feature = "std")))]
-use alloc::{vec::Vec, string::String};
+use alloc::{vec::Vec, string::{String, ToString}};
 
 use serde::{ser, Serialize};
 use crate::{SerWrite, SerError};
@@ -57,9 +57,7 @@ pub type Result<T, E> = core::result::Result<T, Error<E>>;
 
 impl<E: fmt::Display+fmt::Debug> serde::de::StdError for Error<E> {}
 
-impl<E: fmt::Display> fmt::Display for Error<E>
-    where SerError: fmt::Display
-{
+impl<E: fmt::Display> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Writer(err) => err.fmt(f),
@@ -79,7 +77,6 @@ impl<E: fmt::Display+fmt::Debug> serde::ser::Error for Error<E> {
     fn custom<T>(msg: T) -> Self
         where T: fmt::Display
     {
-        use crate::std::string::ToString;
         Error::SerializeError(msg.to_string())
     }
 }
@@ -198,7 +195,7 @@ pub fn to_string_pass_bytes<T>(value: &T) -> Result<String, SerError>
     String::from_utf8(vec).map_err(|_| Error::Utf8Encode)
 }
 
-/// Serialize JSON to a [`SerWrite`] implementation using a provided [`ByteEncoder`].
+/// Serialize `value` as JSON to a [`SerWrite`] implementation using a provided [`ByteEncoder`].
 pub fn to_writer_with_encoder<B, W, T>(writer: W, value: &T) -> Result<(), W::Error>
     where B: ByteEncoder,
           W: SerWrite,
@@ -209,7 +206,7 @@ pub fn to_writer_with_encoder<B, W, T>(writer: W, value: &T) -> Result<(), W::Er
     value.serialize(&mut serializer)
 }
 
-/// Serialize JSON to a [`SerWrite`] implementation.
+/// Serialize `value` as JSON to a [`SerWrite`] implementation.
 ///
 /// Serialize bytes as arrays of numbers.
 pub fn to_writer<W, T>(writer: W, value: &T) -> Result<(), W::Error>
@@ -220,7 +217,7 @@ pub fn to_writer<W, T>(writer: W, value: &T) -> Result<(), W::Error>
     to_writer_with_encoder::<ArrayByteEncoder, _, _>(writer, value)
 }
 
-/// Serialize JSON to a [`SerWrite`] implementation.
+/// Serialize `value` as JSON to a [`SerWrite`] implementation.
 ///
 /// Serialize bytes as HEX strings.
 pub fn to_writer_hex_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
@@ -231,7 +228,7 @@ pub fn to_writer_hex_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
     to_writer_with_encoder::<HexStrByteEncoder, _, _>(writer, value)
 }
 
-/// Serialize JSON to a [`SerWrite`] implementation.
+/// Serialize `value` as JSON to a [`SerWrite`] implementation.
 ///
 /// Serialize bytes as BASE-64 strings.
 pub fn to_writer_base64_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
@@ -242,7 +239,7 @@ pub fn to_writer_base64_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error
     to_writer_with_encoder::<Base64ByteEncoder, _, _>(writer, value)
 }
 
-/// Serialize JSON to a [`SerWrite`] implementation.
+/// Serialize `value` as JSON to a [`SerWrite`] implementation.
 ///
 /// Serialize bytes passing them through.
 /// The notion here is that byte arrays can hold already serialized JSON fragments.

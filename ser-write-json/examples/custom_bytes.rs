@@ -6,7 +6,7 @@ use ser_write_json::{
     ser_write::SerWrite,
     ser::{Error, Serializer, ByteEncoder},
     to_writer_with_encoder,
-    StringByteDecoder, Deserializer, Result as DeResult,
+    de::{StringByteDecoder, Deserializer, Result as DeResult},
     from_mut_slice_with_decoder,
 };
 

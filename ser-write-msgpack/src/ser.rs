@@ -1,3 +1,4 @@
+//! MessagePack serde serializer for `ser-write`
 use core::fmt;
 
 #[cfg(feature = "std")]
@@ -8,10 +9,10 @@ use alloc::{vec::Vec, string::ToString};
 
 use serde::{ser, Serialize};
 use ser::Serializer as _;
-use ser_write::{SerResult as Result};
+// use ser_write::{SerResult as Result};
 use super::magick::*;
 
-pub use ser_write::{SerWrite, SerError, SerResult};
+use ser_write::{SerWrite, SerError};
 
 /// MessagePack serializer serializing structs to arrays and enum variants as indexes
 pub struct CompactSerializer<W> {
@@ -25,48 +26,52 @@ pub struct VerboseSerializer<W> {
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-/// Serialize as a MessagePack message to a vector of bytes
+/// Serialize `value` as a MessagePack message to a vector of bytes
 ///
 /// Serialize data structures as arrays without field names and enum variants as indexes.
-pub fn to_vec<T>(vec: &mut Vec<u8>, value: &T) -> Result<()>
-    where T: Serialize,
+pub fn to_vec<T>(vec: &mut Vec<u8>, value: &T) -> Result<(), SerError>
+    where T: Serialize
 {
     to_writer(vec, value)
 }
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-/// Serialize as a MessagePack message to a vector of bytes
+/// Serialize `value` as a MessagePack message to a vector of bytes
 ///
 /// Serialize data structures as maps where resulting message will contain field and enum variant names.
-pub fn to_vec_named<T>(vec: &mut Vec<u8>, value: &T) -> Result<()>
-    where T: Serialize,
+pub fn to_vec_named<T>(vec: &mut Vec<u8>, value: &T) -> Result<(), SerError>
+    where T: Serialize
 {
     to_writer_named(vec, value)
 }
 
-/// Serialize as a MessagePack message to a SerWrite implementation
+/// Serialize `value` as a MessagePack message to a [`SerWrite`] implementation.
 ///
 /// Serialize data structures as arrays without field names and enum variants as indexes.
-pub fn to_writer<W, T>(writer: W, value: &T) -> Result<()>
-    where W: SerWrite, T: Serialize
+pub fn to_writer<W, T>(writer: W, value: &T) -> Result<(), W::Error>
+    where W: SerWrite,
+          <W as SerWrite>::Error: fmt::Display+fmt::Debug,
+          T: Serialize
 {
     let mut serializer = CompactSerializer::new(writer);
     value.serialize(&mut serializer)
 }
 
-/// Serialize as a MessagePack message to a SerWrite implementation
+/// Serialize `value` as a MessagePack message to a [`SerWrite`] implementation.
 ///
 /// Serialize data structures as maps where resulting message will contain field and enum variant names.
-pub fn to_writer_named<W, T>(writer: W, value: &T) -> Result<()>
-    where W: SerWrite, T: Serialize
+pub fn to_writer_named<W, T>(writer: W, value: &T) -> Result<(), W::Error>
+    where W: SerWrite,
+          <W as SerWrite>::Error: fmt::Display+fmt::Debug,
+          T: Serialize
 {
     let mut serializer = VerboseSerializer::new(writer);
     value.serialize(&mut serializer)
 }
 
-/// An error returned by [`SerWrite`] and serializers
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Serializing error
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Error<E> {
     /// Writer error
@@ -77,48 +82,81 @@ pub enum Error<E> {
     SeqLength,
     /// Serializer could not determine string size
     StrLength,
-    /// Error encoding utf-8 string with pass-through bytes encoder
-    Utf8Encode,
+    /// Serializer could not determine byte-array size
+    DataLength,
     /// Error formatting a collected a string
     FormatError,
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+    /// An error passed down from a [`serde::ser::Serialize`] implementation
+    SerializeError(std::string::String),
+    #[cfg(not(any(feature = "std", feature = "alloc")))]
+    SerializeError
 }
 
+/// Serialization result
 pub type Result<T, E> = core::result::Result<T, Error<E>>;
 
 impl<E: fmt::Display+fmt::Debug> serde::de::StdError for Error<E> {}
 
-impl<E: fmt::Display> fmt::Display for Error<E>
-    where SerError: fmt::Display
-{
+impl<E: fmt::Display> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Writer(err) => err.fmt(f),
             Error::MapLength => f.write_str("unknown or invalid map length"),
             Error::SeqLength => f.write_str("unknown or invalid sequence length"),
             Error::StrLength => f.write_str("invalid string length"),
-            Error::Utf8Encode => f.write_str("error encoding JSON as UTF-8 string"),
+            Error::DataLength => f.write_str("invalid byte array length"),
             Error::FormatError => f.write_str("error collecting a string"),
+            #[cfg(any(feature = "std", feature = "alloc"))]
+            Error::SerializeError(s) => write!(f, "{} while serializing JSON", s),
+            #[cfg(not(any(feature = "std", feature = "alloc")))]
+            Error::SerializeError => f.write_str("custom error while serializing JSON"),
         }
     }
 }
 
+#[cfg(any(feature = "std", feature = "alloc"))]
+impl<E: fmt::Display+fmt::Debug> serde::ser::Error for Error<E> {
+    fn custom<T>(msg: T) -> Self
+        where T: fmt::Display
+    {
+        Error::SerializeError(msg.to_string())
+    }
+}
+
+#[cfg(not(any(feature = "std", feature = "alloc")))]
+impl<E: fmt::Display+fmt::Debug> serde::ser::Error for Error<E> {
+    fn custom<T>(_msg: T) -> Self
+        where T: fmt::Display
+    {
+        Error::SerializeError
+    }
+}
+
+impl<E> From<E> for Error<E> {
+    fn from(err: E) -> Self {
+        Error::Writer(err)
+    }
+}
+
 impl<W: SerWrite> CompactSerializer<W> {
-    fn serialize_variant(&mut self, variant_index: u32, _variant_name: &'static str) -> Result<()> {
+    fn serialize_variant(&mut self, variant_index: u32, _variant_name: &'static str) -> Result<(), W::Error> {
         write_u32(&mut self.output, variant_index)
     }
 
-    fn serialize_struct<'a>(&'a mut self, len: usize) -> Result<SerializeStructArray<'a, CompactSerializer<W>>> {
+    fn serialize_struct<'a>(&'a mut self, len: usize) -> Result<SerializeStructArray<'a, CompactSerializer<W>>, W::Error> {
         write_array_len(&mut self.output, len)?;
         Ok(SerializeStructArray { ser: self })
     }
 }
 
 impl<W: SerWrite> VerboseSerializer<W> {
-    fn serialize_variant(&mut self, _variant_index: u32, variant_name: &'static str) -> Result<()> {
+    fn serialize_variant(&mut self, _variant_index: u32, variant_name: &'static str) -> Result<(), W::Error> {
         write_str(&mut self.output, variant_name)
     }
 
-    fn serialize_struct<'a>(&'a mut self, len: usize) -> Result<SerializeStructMap<'a, VerboseSerializer<W>>> {
+    fn serialize_struct<'a>(&'a mut self, len: usize) -> Result<SerializeStructMap<'a, VerboseSerializer<W>>, W::Error> {
         write_map_len(&mut self.output, len)?;
         Ok(SerializeStructMap { ser: self })
     }
@@ -139,9 +177,11 @@ impl<W> $serializer<W> {
     }
 }
 
-impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
+impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W>
+    where <W as SerWrite>::Error: fmt::Display+fmt::Debug
+{
     type Ok = ();
-    type Error = SerError;
+    type Error = Error<W::Error>;
 
     type SerializeSeq = SerializeSeqMap<'a, $serializer<W>>;
     type SerializeTuple = SerializeTuple<'a, $serializer<W>>;
@@ -155,169 +195,176 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
         false
     }
 
-    fn serialize_bool(self, v: bool) -> Result<()> {
-        self.output.write_byte(if v { TRUE } else { FALSE })
+    fn serialize_bool(self, v: bool) -> Result<(), W::Error> {
+        Ok(self.output.write_byte(if v { TRUE } else { FALSE })?)
     }
     #[inline(always)]
-    fn serialize_i8(self, v: i8) -> Result<()> {
+    fn serialize_i8(self, v: i8) -> Result<(), W::Error> {
         if v >= MIN_NEGFIXINT {
-            self.output.write_byte(v as u8)
+            self.output.write_byte(v as u8)?;
         }
         else {
             self.output.write_byte(INT_8)?;
-            self.output.write_byte(v as u8)
+            self.output.write_byte(v as u8)?;
         }
+        Ok(())
     }
     #[inline(always)]
-    fn serialize_i16(self, v: i16) -> Result<()> {
+    fn serialize_i16(self, v: i16) -> Result<(), W::Error> {
         if FIXINT_I16.contains(&v) {
-            self.output.write_byte(v as u8)
+            self.output.write_byte(v as u8)?;
         }
         else if let Ok(v) = i8::try_from(v) {
             self.output.write_byte(INT_8)?;
-            self.output.write_byte(v as u8)
+            self.output.write_byte(v as u8)?;
         }
         else if let Ok(v) = u8::try_from(v) {
             self.output.write_byte(UINT_8)?;
-            self.output.write_byte(v)            
+            self.output.write_byte(v)?;
         }
         else {
             self.output.write_byte(INT_16)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
+        Ok(())
     }
     #[inline]
-    fn serialize_i32(self, v: i32) -> Result<()> {
+    fn serialize_i32(self, v: i32) -> Result<(), W::Error> {
         if FIXINT_I32.contains(&v) {
-            self.output.write_byte(v as u8)
+            self.output.write_byte(v as u8)?;
         }
         else if let Ok(v) = i8::try_from(v) {
             self.output.write_byte(INT_8)?;
-            self.output.write_byte(v as u8)
+            self.output.write_byte(v as u8)?;
         }
         else if let Ok(v) = u8::try_from(v) {
             self.output.write_byte(UINT_8)?;
-            self.output.write_byte(v)
+            self.output.write_byte(v)?;
         }
         else if let Ok(v) = i16::try_from(v) {
             self.output.write_byte(INT_16)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
         else if let Ok(v) = u16::try_from(v) {
             self.output.write_byte(UINT_16)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
         else {
             self.output.write_byte(INT_32)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
+        Ok(())
     }
 
-    fn serialize_i64(self, v: i64) -> Result<()> {
+    fn serialize_i64(self, v: i64) -> Result<(), W::Error> {
         if FIXINT_I64.contains(&v) {
-            self.output.write_byte(v as u8)
+            self.output.write_byte(v as u8)?;
         }
         else if let Ok(v) = i8::try_from(v) {
             self.output.write_byte(INT_8)?;
-            self.output.write_byte(v as u8)
+            self.output.write_byte(v as u8)?;
         }
         else if let Ok(v) = u8::try_from(v) {
             self.output.write_byte(UINT_8)?;
-            self.output.write_byte(v)
+            self.output.write_byte(v)?;
         }
         else if let Ok(v) = i16::try_from(v) {
             self.output.write_byte(INT_16)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
         else if let Ok(v) = u16::try_from(v) {
             self.output.write_byte(UINT_16)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
         else if let Ok(v) = i32::try_from(v) {
             self.output.write_byte(INT_32)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
         else if let Ok(v) = u32::try_from(v) {
             self.output.write_byte(UINT_32)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
         else {
             self.output.write_byte(INT_64)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
+        Ok(())
     }
 
-    fn serialize_u8(self, v: u8) -> Result<()> {
+    fn serialize_u8(self, v: u8) -> Result<(), W::Error> {
         if v <= MAX_POSFIXINT {
-            self.output.write_byte(v)
+            self.output.write_byte(v)?;
         }
         else {
             self.output.write_byte(UINT_8)?;
-            self.output.write_byte(v)
+            self.output.write_byte(v)?;
         }
+        Ok(())
     }
 
-    fn serialize_u16(self, v: u16) -> Result<()> {
+    fn serialize_u16(self, v: u16) -> Result<(), W::Error> {
         if v <= MAX_POSFIXINT as u16 {
-            self.output.write_byte(v as u8)
+            self.output.write_byte(v as u8)?;
         }
         else if let Ok(v) = u8::try_from(v) {
             self.output.write_byte(UINT_8)?;
-            self.output.write_byte(v)
+            self.output.write_byte(v)?;
         }
         else {
             self.output.write_byte(UINT_16)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
+        Ok(())
     }
 
-    fn serialize_u32(self, v: u32) -> Result<Self::Ok> {
+    fn serialize_u32(self, v: u32) -> Result<Self::Ok, W::Error> {
         write_u32(&mut self.output, v)
     }
 
-    fn serialize_u64(self, v: u64) -> Result<Self::Ok> {
+    fn serialize_u64(self, v: u64) -> Result<Self::Ok, W::Error> {
         if v <= MAX_POSFIXINT as u64 {
-            self.output.write_byte(v as u8)
+            self.output.write_byte(v as u8)?;
         }
         else if let Ok(v) = u8::try_from(v) {
             self.output.write_byte(UINT_8)?;
-            self.output.write_byte(v)
+            self.output.write_byte(v)?;
         }
         else if let Ok(v) = u16::try_from(v) {
             self.output.write_byte(UINT_16)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
         else if let Ok(v) = u32::try_from(v) {
             self.output.write_byte(UINT_32)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
         else {
             self.output.write_byte(UINT_64)?;
-            self.output.write(&v.to_be_bytes())
+            self.output.write(&v.to_be_bytes())?;
         }
+        Ok(())
     }
 
-    fn serialize_f32(self, v: f32) -> Result<()> {
+    fn serialize_f32(self, v: f32) -> Result<(), W::Error> {
         self.output.write_byte(FLOAT_32)?;
-        self.output.write(&v.to_be_bytes())
+        Ok(self.output.write(&v.to_be_bytes())?)
     }
 
-    fn serialize_f64(self, v: f64) -> Result<()> {
+    fn serialize_f64(self, v: f64) -> Result<(), W::Error> {
         self.output.write_byte(FLOAT_64)?;
-        self.output.write(&v.to_be_bytes())
+        Ok(self.output.write(&v.to_be_bytes())?)
     }
 
-    fn serialize_char(self, v: char) -> Result<()> {
+    fn serialize_char(self, v: char) -> Result<(), W::Error> {
         let mut encoding_tmp = [0u8; 4];
         let encoded = v.encode_utf8(&mut encoding_tmp);
         self.serialize_str(encoded)
     }
 
-    fn serialize_str(self, v: &str) -> Result<()> {
-        write_str(&mut self.output, v)
+    fn serialize_str(self, v: &str) -> Result<(), W::Error> {
+        Ok(write_str(&mut self.output, v)?)
     }
 
-    fn serialize_bytes(self, v: &[u8]) -> Result<()> {
+    fn serialize_bytes(self, v: &[u8]) -> Result<(), W::Error> {
         let size = v.len();
         if let Ok(size) = u8::try_from(size) {
             self.output.write_byte(BIN_8)?;
@@ -332,26 +379,26 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
             self.output.write(&size.to_be_bytes())?;
         }
         else {
-            return Err(SerError::BufferFull)
+            return Err(Error::DataLength)
         }
-        self.output.write(v)
+        Ok(self.output.write(v)?)
     }
 
-    fn serialize_none(self) -> Result<()> {
-        self.output.write_byte(NIL)
+    fn serialize_none(self) -> Result<(), W::Error> {
+        Ok(self.output.write_byte(NIL)?)
     }
 
-    fn serialize_some<T>(self, value: &T) -> Result<()>
+    fn serialize_some<T>(self, value: &T) -> Result<(), W::Error>
         where T: ?Sized + Serialize
     {
         value.serialize(self)
     }
 
-    fn serialize_unit(self) -> Result<()> {
+    fn serialize_unit(self) -> Result<(), W::Error> {
         self.serialize_none()
     }
 
-    fn serialize_unit_struct(self, _name: &'static str) -> Result<()> {
+    fn serialize_unit_struct(self, _name: &'static str) -> Result<(), W::Error> {
         self.serialize_unit()
     }
 
@@ -360,7 +407,7 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
         _name: &'static str,
         variant_index: u32,
         variant: &'static str,
-    ) -> Result<()> {
+    ) -> Result<(), W::Error> {
         self.serialize_variant(variant_index, variant)
     }
 
@@ -368,7 +415,7 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
         self,
         _name: &'static str,
         value: &T,
-    ) -> Result<()>
+    ) -> Result<(), W::Error>
         where T: ?Sized + Serialize
     {
         value.serialize(self)
@@ -380,7 +427,7 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
         variant_index: u32,
         variant: &'static str,
         value: &T,
-    ) -> Result<()>
+    ) -> Result<(), W::Error>
     where
         T: ?Sized + Serialize,
     {
@@ -389,13 +436,13 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
         value.serialize(&mut *self)
     }
 
-    fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq> {
-        let len = len.ok_or(SerError::SeqLength)?;
+    fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, W::Error> {
+        let len = len.ok_or(Error::SeqLength)?;
         write_array_len(&mut self.output, len)?;
         Ok(SerializeSeqMap { len, ser: self })
     }
 
-    fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple> {
+    fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, W::Error> {
         write_array_len(&mut self.output, len)?;
         Ok(SerializeTuple { ser: self })
     }
@@ -404,7 +451,7 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
         self,
         _name: &'static str,
         len: usize,
-    ) -> Result<Self::SerializeTupleStruct> {
+    ) -> Result<Self::SerializeTupleStruct, W::Error> {
         self.serialize_tuple(len)
     }
 
@@ -416,14 +463,14 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
         variant_index: u32,
         variant: &'static str,
         len: usize,
-    ) -> Result<Self::SerializeTupleVariant> {
+    ) -> Result<Self::SerializeTupleVariant, W::Error> {
         self.output.write_byte(FIXMAP|1)?;
         self.serialize_variant(variant_index, variant)?;
         self.serialize_tuple(len)
     }
 
-    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap> {
-        let len = len.ok_or(SerError::MapLength)?;
+    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, W::Error> {
+        let len = len.ok_or(Error::MapLength)?;
         write_map_len(&mut self.output, len)?;
         Ok(SerializeSeqMap { len, ser: self })
     }
@@ -432,7 +479,7 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
         self,
         _name: &'static str,
         len: usize,
-    ) -> Result<Self::SerializeStruct> {
+    ) -> Result<Self::SerializeStruct, W::Error> {
         self.serialize_struct(len)
     }
 
@@ -444,14 +491,14 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
         variant_index: u32,
         variant: &'static str,
         len: usize,
-    ) -> Result<Self::SerializeStructVariant> {
+    ) -> Result<Self::SerializeStructVariant, W::Error> {
         self.output.write_byte(FIXMAP|1)?;
         self.serialize_variant(variant_index, variant)?;
         self.serialize_struct(len)
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
-    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok>
+    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok, W::Error>
         where T: fmt::Display
     {
         self.serialize_str(&value.to_string())
@@ -460,18 +507,18 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W> {
     #[cfg(not(any(feature = "std", feature = "alloc")))]
     /// This implementation will format the value string twice, once to establish its size and later to actually
     /// write the string.
-    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok>
+    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok, W::Error>
         where T: fmt::Display
     {
         if let Some(s) = format_args!("{}", value).as_str() {
             return self.serialize_str(s)
         }
         let mut col = StringLenCounter(0);
-        fmt::write(&mut col, format_args!("{}", value)).map_err(|_| SerError::BufferFull)?;
+        fmt::write(&mut col, format_args!("{}", value)).map_err(|_| Error::FormatError)?;
         let StringLenCounter(len) = col;
         write_str_len(&mut self.output, len)?;
         let mut col = StringCollector::new(len, &mut self.output);
-        fmt::write(&mut col, format_args!("{}", value)).map_err(|_| SerError::BufferFull)
+        fmt::write(&mut col, format_args!("{}", value)).map_err(|_| Error::FormatError)
     }
 }
 
@@ -482,33 +529,34 @@ implement_serializer!(CompactSerializer, SerializeStructArray);
 implement_serializer!(VerboseSerializer, SerializeStructMap);
 
 #[inline]
-fn write_u32<W: SerWrite>(output: &mut W, v: u32) -> Result<()> {
+fn write_u32<W: SerWrite>(output: &mut W, v: u32) -> Result<(), W::Error> {
     if v <= MAX_POSFIXINT as u32 {
-        output.write_byte(v as u8)
+        output.write_byte(v as u8)?;
     }
     else if let Ok(v) = u8::try_from(v) {
         output.write_byte(UINT_8)?;
-        output.write_byte(v)
+        output.write_byte(v)?;
     }
     else if let Ok(v) = u16::try_from(v) {
         output.write_byte(UINT_16)?;
-        output.write(&v.to_be_bytes())
+        output.write(&v.to_be_bytes())?;
     }
     else {
         output.write_byte(UINT_32)?;
-        output.write(&v.to_be_bytes())
+        output.write(&v.to_be_bytes())?;
     }
+    Ok(())
 }
 
 #[inline]
-fn write_str<W: SerWrite>(output: &mut W, v: &str) -> Result<()> {
+fn write_str<W: SerWrite>(output: &mut W, v: &str) -> Result<(), W::Error> {
     let size = v.len();
     write_str_len(output, size)?;
-    output.write_str(v)
+    Ok(output.write_str(v)?)
 }
 
 #[inline]
-fn write_str_len<W: SerWrite>(output: &mut W, len: usize) -> Result<()> {
+fn write_str_len<W: SerWrite>(output: &mut W, len: usize) -> Result<(), W::Error> {
     if len <= MAX_FIXSTR_SIZE {
         output.write_byte(FIXSTR | (len as u8))?;
     }
@@ -525,13 +573,13 @@ fn write_str_len<W: SerWrite>(output: &mut W, len: usize) -> Result<()> {
         output.write(&len.to_be_bytes())?;
     }
     else {
-        return Err(SerError::BufferFull)
+        return Err(Error::StrLength)
     }
     Ok(())
 }
 
 #[inline]
-fn write_array_len<W: SerWrite>(output: &mut W, len: usize) -> Result<()> {
+fn write_array_len<W: SerWrite>(output: &mut W, len: usize) -> Result<(), W::Error> {
     if len <= MAX_FIXARRAY_SIZE {
         output.write_byte(FIXARRAY | (len as u8))?;
     }
@@ -544,13 +592,13 @@ fn write_array_len<W: SerWrite>(output: &mut W, len: usize) -> Result<()> {
         output.write(&len.to_be_bytes())?;
     }
     else {
-        return Err(SerError::BufferFull)
+        return Err(Error::SeqLength)
     }
     Ok(())
 }
 
 #[inline]
-fn write_map_len<W: SerWrite>(output: &mut W, len: usize) -> Result<()> {
+fn write_map_len<W: SerWrite>(output: &mut W, len: usize) -> Result<(), W::Error> {
     if len <= MAX_FIXMAP_SIZE {
         output.write_byte(FIXMAP | (len as u8))?;
     }
@@ -563,7 +611,7 @@ fn write_map_len<W: SerWrite>(output: &mut W, len: usize) -> Result<()> {
         output.write(&len.to_be_bytes())?;
     }
     else {
-        return Err(SerError::BufferFull)
+        return Err(Error::MapLength)
     }
     Ok(())
 }
@@ -620,166 +668,175 @@ pub struct SerializeStructArray<'a, S> {
 
 // This impl is SerializeSeq so these methods are called after `serialize_seq`
 // is called on the Serializer.
-impl<'a, S> ser::SerializeSeq for SerializeSeqMap<'a, S>
-    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = SerError>
+impl<'a, S, E> ser::SerializeSeq for SerializeSeqMap<'a, S>
+    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = Error<E>>,
+          E: fmt::Display + fmt::Debug
 {
     type Ok = ();
-    type Error = SerError;
+    type Error = Error<E>;
 
-    fn serialize_element<T>(&mut self, value: &T) -> Result<()>
+    fn serialize_element<T>(&mut self, value: &T) -> Result<(), E>
         where T: ?Sized + Serialize
     {
-        self.len = self.len.checked_sub(1).ok_or(SerError::SeqLength)?;
+        self.len = self.len.checked_sub(1).ok_or(Error::SeqLength)?;
         value.serialize(&mut *self.ser)
     }
 
-    fn end(self) -> Result<()> {
-        (self.len == 0).then_some(()).ok_or(SerError::SeqLength)
+    fn end(self) -> Result<(), E> {
+        (self.len == 0).then_some(()).ok_or(Error::SeqLength)
     }
 }
 
-impl<'a, S> ser::SerializeTuple for SerializeTuple<'a, S>
-    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = SerError>
+impl<'a, S, E> ser::SerializeTuple for SerializeTuple<'a, S>
+    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = Error<E>>,
+          E: fmt::Display + fmt::Debug
 {
     type Ok = ();
-    type Error = SerError;
+    type Error = Error<E>;
 
-    fn serialize_element<T>(&mut self, value: &T) -> Result<()>
+    fn serialize_element<T>(&mut self, value: &T) -> Result<(), E>
     where T: ?Sized + Serialize
     {
         value.serialize(&mut *self.ser)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), E> {
         Ok(())
     }
 }
 
-impl<'a, S> ser::SerializeTupleStruct for SerializeTuple<'a, S>
-    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = SerError>
+impl<'a, S, E> ser::SerializeTupleStruct for SerializeTuple<'a, S>
+    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = Error<E>>,
+          E: fmt::Display + fmt::Debug
 {
     type Ok = ();
-    type Error = SerError;
+    type Error = Error<E>;
 
-    fn serialize_field<T>(&mut self, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, value: &T) -> Result<(), E>
         where T: ?Sized + Serialize
     {
         value.serialize(&mut *self.ser)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), E> {
         Ok(())
     }
 }
 
 // Tuple variants are a little different. { NAME: [ ... ]}
-impl<'a, S> ser::SerializeTupleVariant for SerializeTuple<'a, S>
-    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = SerError>
+impl<'a, S, E> ser::SerializeTupleVariant for SerializeTuple<'a, S>
+    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = Error<E>>,
+          E: fmt::Display + fmt::Debug
 {
     type Ok = ();
-    type Error = SerError;
+    type Error = Error<E>;
 
-    fn serialize_field<T>(&mut self, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, value: &T) -> Result<(), E>
     where T: ?Sized + Serialize
     {
         value.serialize(&mut *self.ser)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), E> {
         Ok(())
     }
 }
 
-impl<'a, S> ser::SerializeMap for SerializeSeqMap<'a, S>
-    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = SerError>
+impl<'a, S, E> ser::SerializeMap for SerializeSeqMap<'a, S>
+    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = Error<E>>,
+          E: fmt::Display + fmt::Debug
 {
     type Ok = ();
-    type Error = SerError;
+    type Error = Error<E>;
 
-    fn serialize_key<T>(&mut self, key: &T) -> Result<()>
+    fn serialize_key<T>(&mut self, key: &T) -> Result<(), E>
         where T: ?Sized + Serialize
     {
-        self.len = self.len.checked_sub(1).ok_or(SerError::MapLength)?;
+        self.len = self.len.checked_sub(1).ok_or(Error::MapLength)?;
         key.serialize(&mut *self.ser)
     }
 
-    fn serialize_value<T>(&mut self, value: &T) -> Result<()>
+    fn serialize_value<T>(&mut self, value: &T) -> Result<(), E>
     where T: ?Sized + Serialize
     {
         value.serialize(&mut *self.ser)
     }
 
-    fn end(self) -> Result<()> {
-        (self.len == 0).then_some(()).ok_or(SerError::MapLength)
+    fn end(self) -> Result<(), E> {
+        (self.len == 0).then_some(()).ok_or(Error::MapLength)
     }
 }
 
-impl<'a, S> ser::SerializeStruct for SerializeStructArray<'a, S>
-    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = SerError>
+impl<'a, S, E> ser::SerializeStruct for SerializeStructArray<'a, S>
+    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = Error<E>>,
+          E: fmt::Display + fmt::Debug
 {
     type Ok = ();
-    type Error = SerError;
+    type Error = Error<E>;
 
-    fn serialize_field<T>(&mut self, _key: &'static str, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, _key: &'static str, value: &T) -> Result<(), E>
         where T: ?Sized + Serialize
     {
         value.serialize(&mut *self.ser)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), E> {
         Ok(())
     }
 }
 
-impl<'a, S> ser::SerializeStructVariant for SerializeStructArray<'a, S>
-    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = SerError>
+impl<'a, S, E> ser::SerializeStructVariant for SerializeStructArray<'a, S>
+    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = Error<E>>,
+          E: fmt::Display + fmt::Debug
 {
     type Ok = ();
-    type Error = SerError;
+    type Error = Error<E>;
 
-    fn serialize_field<T>(&mut self, _key: &'static str, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, _key: &'static str, value: &T) -> Result<(), E>
         where T: ?Sized + Serialize
     {
         value.serialize(&mut *self.ser)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), E> {
         Ok(())
     }
 }
 
-impl<'a, S> ser::SerializeStruct for SerializeStructMap<'a, S>
-    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = SerError>
+impl<'a, S, E> ser::SerializeStruct for SerializeStructMap<'a, S>
+    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = Error<E>>,
+          E: fmt::Display + fmt::Debug
 {
     type Ok = ();
-    type Error = SerError;
+    type Error = Error<E>;
 
-    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), E>
         where T: ?Sized + Serialize
     {
         self.ser.serialize_str(key)?;
         value.serialize(&mut *self.ser)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), E> {
         Ok(())
     }
 }
 
-impl<'a, S> ser::SerializeStructVariant for SerializeStructMap<'a, S>
-    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = SerError>
+impl<'a, S, E> ser::SerializeStructVariant for SerializeStructMap<'a, S>
+    where for<'b> &'b mut S: serde::Serializer<Ok = (), Error = Error<E>>,
+          E: fmt::Display + fmt::Debug
 {
     type Ok = ();
-    type Error = SerError;
+    type Error = Error<E>;
 
-    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), E>
         where T: ?Sized + Serialize
     {
         self.ser.serialize_str(key)?;
         value.serialize(&mut *self.ser)
     }
 
-    fn end(self) -> Result<()> {
+    fn end(self) -> Result<(), E> {
         Ok(())
     }
 }

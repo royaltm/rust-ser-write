@@ -1,0 +1,799 @@
+//! MessagePack serde deserializer
+#![allow(unused_imports)]
+use core::convert::Infallible;
+use core::num::{NonZeroUsize, TryFromIntError};
+use core::ops::Neg;
+use core::slice::from_raw_parts_mut;
+use core::str::{Utf8Error, FromStr};
+use core::{fmt, str};
+use serde::forward_to_deserialize_any;
+use serde::de::{self, Visitor, SeqAccess, MapAccess, DeserializeSeed};
+
+use crate::magick::*;
+
+pub struct Deserializer<'de> {
+    input: &'de[u8],
+    index: usize
+}
+
+/// Deserialization result
+pub type Result<T> = core::result::Result<T, Error>;
+
+/// Deserialization error
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[non_exhaustive]
+pub enum Error {
+    /// EOF while parsing
+    UnexpectedEof,
+    /// Reserved code was detected
+    ReservedCode,
+    /// Unsopported extension was detected
+    UnsupportedExt,
+    /// Number could not be coerced
+    InvalidInteger,
+    /// Invalid type
+    InvalidType,
+    /// Invalid unicode code point
+    InvalidUnicodeCodePoint,
+    /// Expected an integer type
+    ExpectedInteger,
+    /// Expected a number type
+    ExpectedNumber,
+    /// Expected a string
+    ExpectedString,
+    /// Expected a binary type
+    ExpectedBin,
+    /// Expected NIL type
+    ExpectedNil,
+    /// Expected an array type
+    ExpectedArray,
+    /// Expected a map type
+    ExpectedMap,
+    /// Expected a map or an array type
+    ExpectedStruct,
+    /// Expected struct or variant identifier
+    ExpectedIdentifier,
+    /// Invalid length
+    InvalidLength,
+    /// Error with a custom message that we had to discard.
+    CustomError
+}
+
+impl serde::de::StdError for Error {}
+
+impl de::Error for Error {
+    fn custom<T: fmt::Display>(_msg: T) -> Self {
+        Error::CustomError
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Error::UnexpectedEof => "Unexpected end of MessagePack input",
+            Error::ReservedCode => "Reserved MessagePack code in input",
+            Error::UnsupportedExt => "Unsupported MessagePack extension code in input",
+            Error::InvalidInteger => "Could not coerce integer to a deserialized type",
+            Error::InvalidType => "Invalid type",
+            Error::InvalidUnicodeCodePoint => "Invalid unicode code point",
+            Error::ExpectedInteger => "Expected MessagePack integer",
+            Error::ExpectedNumber => "Expected MessagePack number",
+            Error::ExpectedString => "Expected MessagePack string",
+            Error::ExpectedBin => "Expected MessagePack bin",
+            Error::ExpectedNil => "Expected MessagePack NIL",
+            Error::ExpectedArray => "Expected MessagePack array",
+            Error::ExpectedMap => "Expected MessagePack map",
+            Error::ExpectedStruct => "Expected MessagePack map or array",
+            Error::ExpectedIdentifier => "Expected a struct field or enum variant identifier",
+            Error::InvalidLength => "Invalid length",
+            Error::CustomError => "MessagePack does not match deserializer’s expected format.",
+        })
+    }
+}
+
+impl From<TryFromIntError> for Error {
+    fn from(_err: TryFromIntError) -> Self {
+        Error::InvalidInteger
+    }
+}
+
+impl From<Infallible> for Error {
+    fn from(_err: Infallible) -> Self {
+        unreachable!()
+    }
+}
+
+impl From<Utf8Error> for Error {
+    fn from(_err: Utf8Error) -> Self {
+        Error::InvalidUnicodeCodePoint
+    }
+}
+
+enum MsgType {
+    Single(usize),
+    Array(usize),
+    Map(usize),
+}
+
+impl<'de> Deserializer<'de> {
+    /// Provide a slice from which to deserialize
+    pub fn from_slice(input: &'de[u8]) -> Self {
+        Deserializer { input, index: 0, }
+    }
+
+    /// Consume deserializer and return the remaining portion of the input slice
+    pub fn end(self) -> Result<&'de[u8]> {
+        if let Some(input) = self.input.get(self.index..) {
+            Ok(input)
+        }
+        else {
+            Err(Error::UnexpectedEof)
+        }
+    }
+
+    /// Peek at the next byte code, otherwise return `Err(Error::UnexpectedEof)`.
+    pub fn peek(&self) -> Result<u8> {
+        self.input.get(self.index).copied()
+        .ok_or_else(|| Error::UnexpectedEof)
+    }
+    /// Advance the input cursor by `len` characters.
+    ///
+    /// _Note_: this function only increases a cursor without any checks!
+    #[inline(always)]
+    pub fn eat_some(&mut self, len: usize) {
+        self.index += len;
+    }
+    /// Return a mutable reference to the unparsed portion of the input slice on success.
+    /// Otherwise return `Err(Error::UnexpectedEof)`.
+    pub fn input_ref(&mut self) -> Result<&[u8]> {
+        self.input.get(self.index..).ok_or_else(|| Error::UnexpectedEof)
+    }
+    /// Split the unparsed portion of the input slice between `0..len` and return it with
+    /// the lifetime of the original slice container.
+    ///
+    /// The returned slice can be passed to `visit_borrowed_*` functions of a [`Visitor`].
+    ///
+    /// Drop already parsed bytes and the new unparsed input slice will begin at `len`.
+    ///
+    /// __Panics__ if `cursor` + `len` overflows `usize` integer capacity.
+    pub fn split_input(&mut self, len: usize) -> Result<&'de[u8]> {
+        let at = self.index.checked_add(len).unwrap();
+        if at > self.input.len() {
+            return Err(Error::UnexpectedEof)
+        }
+        let (res, input) = self.input.split_at(at);
+        self.input = input;
+        self.index = 0;
+        Ok(res)
+    }
+
+    pub fn fetch(&mut self) -> Result<u8> {
+        let c = self.peek()?;
+        self.eat_some(1);
+        Ok(c)
+    }
+
+    pub fn fetch_array<const N: usize>(&mut self) -> Result<[u8;N]> {
+        let index = self.index;
+        let res = self.input.get(index..index+N)
+        .ok_or_else(|| Error::UnexpectedEof)?
+        .try_into().unwrap();
+        self.eat_some(N);
+        Ok(res)
+    }
+
+    pub fn fetch_u8(&mut self) -> Result<u8> {
+        Ok(u8::from_be_bytes(self.fetch_array()?))
+    }
+
+    pub fn fetch_i8(&mut self) -> Result<i8> {
+        Ok(i8::from_be_bytes(self.fetch_array()?))
+    }
+
+    pub fn fetch_u16(&mut self) -> Result<u16> {
+        Ok(u16::from_be_bytes(self.fetch_array()?))
+    }
+
+    pub fn fetch_i16(&mut self) -> Result<i16> {
+        Ok(i16::from_be_bytes(self.fetch_array()?))
+    }
+
+    pub fn fetch_u32(&mut self) -> Result<u32> {
+        Ok(u32::from_be_bytes(self.fetch_array()?))
+    }
+
+    pub fn fetch_i32(&mut self) -> Result<i32> {
+        Ok(i32::from_be_bytes(self.fetch_array()?))
+    }
+
+    pub fn fetch_u64(&mut self) -> Result<u64> {
+        Ok(u64::from_be_bytes(self.fetch_array()?))
+    }
+
+    pub fn fetch_i64(&mut self) -> Result<i64> {
+        Ok(i64::from_be_bytes(self.fetch_array()?))
+    }
+
+    pub fn fetch_f32(&mut self) -> Result<f32> {
+        Ok(f32::from_be_bytes(self.fetch_array()?))
+    }
+
+    pub fn fetch_f64(&mut self) -> Result<f64> {
+        Ok(f64::from_be_bytes(self.fetch_array()?))
+    }
+
+    fn parse_str(&mut self) -> Result<&'de str> {
+        let len: usize = match self.fetch()? {
+            c@(FIXSTR..=FIXSTR_MAX) => (c as usize) & MAX_FIXSTR_SIZE,
+            STR_8 => self.fetch_u8()?.into(),
+            STR_16 => self.fetch_u16()?.into(),
+            STR_32 => self.fetch_u32()?.try_into()?,
+            _ => return Err(Error::ExpectedString)
+        };
+        Ok(core::str::from_utf8(self.split_input(len)?)?)
+    }
+
+    fn parse_bytes(&mut self) -> Result<&'de[u8]> {
+        let len: usize = match self.fetch()? {
+            BIN_8 => self.fetch_u8()?.into(),
+            BIN_16 => self.fetch_u16()?.into(),
+            BIN_32 => self.fetch_u32()?.try_into()?,
+            _ => return Err(Error::ExpectedBin)
+        };
+        self.split_input(len)
+    }
+
+    fn parse_integer<N>(&mut self) -> Result<N>
+        where N: TryFrom<i8> + TryFrom<u8> +
+                 TryFrom<i16> + TryFrom<u16> +
+                 TryFrom<i32> + TryFrom<u32> +
+                 TryFrom<i64> + TryFrom<u64>,
+              Error: From<<N as TryFrom<i8>>::Error>,
+              Error: From<<N as TryFrom<u8>>::Error>,
+              Error: From<<N as TryFrom<i16>>::Error>,
+              Error: From<<N as TryFrom<u16>>::Error>,
+              Error: From<<N as TryFrom<i32>>::Error>,
+              Error: From<<N as TryFrom<u32>>::Error>,
+              Error: From<<N as TryFrom<i64>>::Error>,
+              Error: From<<N as TryFrom<u64>>::Error>,
+    {
+        let n: N = match self.fetch()? {
+            n@(MIN_POSFIXINT..=MAX_POSFIXINT|NEGFIXINT..=0xff) => {
+                (n as i8).try_into()?
+            }
+            UINT_8  => (self.fetch_u8()?).try_into()?,
+            UINT_16 => (self.fetch_u16()?).try_into()?,
+            UINT_32 => (self.fetch_u32()?).try_into()?,
+            UINT_64 => (self.fetch_u64()?).try_into()?,
+            INT_8   => (self.fetch_i8()?).try_into()?,
+            INT_16  => (self.fetch_i16()?).try_into()?,
+            INT_32  => (self.fetch_i32()?).try_into()?,
+            INT_64  => (self.fetch_i64()?).try_into()?,
+            _ => return Err(Error::ExpectedInteger)
+        };
+        Ok(n)
+    }
+
+    fn eat_item(&mut self) -> Result<()> {
+        use MsgType::*;
+        let mtyp = match self.fetch()? {
+            NIL|
+            FALSE|
+            TRUE|
+            MIN_POSFIXINT..=MAX_POSFIXINT|
+            NEGFIXINT..=0xff => Single(0),
+            c@(FIXMAP..=FIXMAP_MAX) => Map((c as usize) & MAX_FIXMAP_SIZE),
+            c@(FIXARRAY..=FIXARRAY_MAX) => Array((c as usize) & MAX_FIXARRAY_SIZE),
+            c@(FIXSTR..=FIXSTR_MAX) => Single((c as usize) & MAX_FIXSTR_SIZE),
+            0xc1 => return Err(Error::ReservedCode),
+            BIN_8|STR_8 => Single(self.fetch_u8()?.into()),
+            BIN_16|STR_16 => Single(self.fetch_u16()?.into()),
+            BIN_32|STR_32 => Single(self.fetch_u32()?.try_into()?),
+            EXT_8 => Single(1usize + usize::from(self.fetch_u8()?)),
+            EXT_16 => Single(1usize + usize::from(self.fetch_u16()?)),
+            EXT_32 => Single(1usize + usize::try_from(self.fetch_u32()?)?),
+            FLOAT_32 => Single(4),
+            FLOAT_64 => Single(8),
+            UINT_8 => Single(1),
+            UINT_16 => Single(2),
+            UINT_32 => Single(4),
+            UINT_64 => Single(8),
+            INT_8 => Single(1),
+            INT_16 => Single(2),
+            INT_32 => Single(4),
+            INT_64 => Single(8),
+            FIXEXT_1 => Single(2),
+            FIXEXT_2 => Single(3),
+            FIXEXT_4 => Single(5),
+            FIXEXT_8 => Single(9),
+            FIXEXT_16 => Single(17),
+            ARRAY_16 => Array(self.fetch_u16()?.into()),
+            ARRAY_32 => Array(self.fetch_u32()?.try_into()?),
+            MAP_16 => Map(self.fetch_u16()?.into()),
+            MAP_32 => Map(self.fetch_u32()?.try_into()?),
+        };
+        match mtyp {
+            Single(len) => self.eat_some(len),
+            Array(len) => self.eat_seq_items(len)?,
+            Map(len) => self.eat_map_items(len)?
+        }
+        Ok(())
+    }
+
+    fn eat_seq_items(&mut self, len: usize) -> Result<()> {
+        for _ in 0..len {
+            self.eat_item()?;
+        }
+        Ok(())
+    }
+
+    fn eat_map_items(&mut self, len: usize) -> Result<()> {
+        for _ in 0..len {
+            self.eat_item()?;
+            self.eat_item()?;
+        }
+        Ok(())
+    }
+
+}
+
+
+impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
+    type Error = Error;
+
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        match self.peek()? {
+            MIN_POSFIXINT..=MAX_POSFIXINT => self.deserialize_u8(visitor),
+            FIXMAP..=FIXMAP_MAX => self.deserialize_map(visitor),
+            FIXARRAY..=FIXARRAY_MAX => self.deserialize_seq(visitor),
+            FIXSTR..=FIXSTR_MAX => self.deserialize_str(visitor),
+            NIL => self.deserialize_unit(visitor),
+            0xc1 => Err(Error::ReservedCode),
+            FALSE|
+            TRUE => self.deserialize_bool(visitor),
+            BIN_8|
+            BIN_16|
+            BIN_32 => self.deserialize_bytes(visitor),
+            EXT_8|
+            EXT_16|
+            EXT_32 => Err(Error::UnsupportedExt),
+            FLOAT_32 => self.deserialize_f32(visitor),
+            FLOAT_64 => self.deserialize_f64(visitor),
+            UINT_8 => self.deserialize_u8(visitor),
+            UINT_16 => self.deserialize_u16(visitor),
+            UINT_32 => self.deserialize_u32(visitor),
+            UINT_64 => self.deserialize_u64(visitor),
+            INT_8 => self.deserialize_i8(visitor),
+            INT_16 => self.deserialize_i16(visitor),
+            INT_32 => self.deserialize_i32(visitor),
+            INT_64 => self.deserialize_i64(visitor),
+            FIXEXT_1|
+            FIXEXT_2|
+            FIXEXT_4|
+            FIXEXT_8|
+            FIXEXT_16 => Err(Error::UnsupportedExt),
+            STR_8|
+            STR_16|
+            STR_32 => self.deserialize_str(visitor),
+            ARRAY_16|
+            ARRAY_32 => self.deserialize_seq(visitor),
+            MAP_16|
+            MAP_32 => self.deserialize_map(visitor),
+            NEGFIXINT..=0xff => self.deserialize_i8(visitor),
+        }
+    }
+
+    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        let boolean = match self.fetch()? {
+            TRUE => true,
+            FALSE => false,
+            _ => return Err(Error::InvalidType)
+        };
+        visitor.visit_bool(boolean)
+    }
+
+    fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_i8(self.parse_integer()?)
+    }
+
+    fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_i16(self.parse_integer()?)
+    }
+
+    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_i32(self.parse_integer()?)
+    }
+
+    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_i64(self.parse_integer()?)
+    }
+
+    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_u8(self.parse_integer()?)
+    }
+
+    fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_u16(self.parse_integer()?)
+    }
+
+    fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_u32(self.parse_integer()?)
+    }
+
+    fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_u64(self.parse_integer()?)
+    }
+
+    fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        let f: f32 = match self.fetch()? {
+            FLOAT_32 => self.fetch_f32()?,
+            FLOAT_64 => self.fetch_f64()? as f32,
+            NIL => f32::NAN,
+            UINT_8  => self.fetch_u8()? as f32,
+            UINT_16 => self.fetch_u16()? as f32,
+            UINT_32 => self.fetch_u32()? as f32,
+            UINT_64 => self.fetch_u64()? as f32,
+            INT_8   => self.fetch_i8()? as f32,
+            INT_16  => self.fetch_i16()? as f32,
+            INT_32  => self.fetch_i32()? as f32,
+            INT_64  => self.fetch_i64()? as f32,
+            _ => return Err(Error::ExpectedNumber)
+        };
+        visitor.visit_f32(f)
+    }
+
+    fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        let f: f64 = match self.peek()? {
+            FLOAT_64 => self.fetch_f64()?,
+            FLOAT_32 => self.fetch_f32()? as f64,
+            NIL => f64::NAN,
+            UINT_8  => self.fetch_u8()? as f64,
+            UINT_16 => self.fetch_u16()? as f64,
+            UINT_32 => self.fetch_u32()? as f64,
+            UINT_64 => self.fetch_u64()? as f64,
+            INT_8   => self.fetch_i8()? as f64,
+            INT_16  => self.fetch_i16()? as f64,
+            INT_32  => self.fetch_i32()? as f64,
+            INT_64  => self.fetch_i64()? as f64,
+            _ => return Err(Error::ExpectedNumber)
+        };
+        visitor.visit_f64(f)
+    }
+
+    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        let s = self.parse_str()?;
+        let ch = char::from_str(s).map_err(|_| Error::InvalidLength)?;
+        visitor.visit_char(ch)
+    }
+
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_borrowed_str(self.parse_str()?)
+    }
+
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        self.deserialize_str(visitor)
+    }
+
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_borrowed_bytes(self.parse_bytes()?)
+    }
+
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        self.deserialize_bytes(visitor)
+    }
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        match self.fetch()? {
+            NIL => visitor.visit_none(),
+            _ => visitor.visit_some(self)
+        }
+    }
+
+    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        match self.fetch()? {
+            NIL => visitor.visit_unit(),
+            _ => Err(Error::ExpectedNil)
+        }
+    }
+
+    fn deserialize_unit_struct<V>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        self.deserialize_unit(visitor)
+    }
+
+    // As is done here, serializers are encouraged to treat newtype structs as
+    // insignificant wrappers around the data they contain. That means not
+    // parsing anything other than the contained value.
+    fn deserialize_newtype_struct<V>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_newtype_struct(self)
+    }
+
+    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        let len: usize = match self.fetch()? {
+            c@(FIXARRAY..=FIXARRAY_MAX) => (c as usize) & MAX_FIXARRAY_SIZE,
+            ARRAY_16 => self.fetch_u16()?.into(),
+            ARRAY_32 => self.fetch_u32()?.try_into()?,
+            _ => return Err(Error::ExpectedArray)
+        };
+        visitor.visit_seq(CountedAccess::new(self, len))
+    }
+
+    fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        self.deserialize_seq(visitor)
+    }
+
+    fn deserialize_tuple_struct<V>(
+        self,
+        _name: &'static str,
+        _len: usize,
+        visitor: V,
+    ) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        self.deserialize_seq(visitor)
+    }
+
+    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        let len: usize = match self.fetch()? {
+            c@(FIXMAP..=FIXMAP_MAX) => (c as usize) & MAX_FIXMAP_SIZE,
+            MAP_16 => self.fetch_u16()?.into(),
+            MAP_32 => self.fetch_u32()?.try_into()?,
+            _ => return Err(Error::ExpectedMap)
+        };
+        visitor.visit_map(CountedAccess::new(self, len))
+    }
+
+    fn deserialize_struct<V>(
+        self,
+        _name: &'static str,
+        _fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        let (map, len): (bool, usize) = match self.fetch()? {
+            c@(FIXMAP..=FIXMAP_MAX) => (true, (c as usize) & MAX_FIXMAP_SIZE),
+            MAP_16 => (true, self.fetch_u16()?.into()),
+            MAP_32 => (true, self.fetch_u32()?.try_into()?),
+            c@(FIXARRAY..=FIXARRAY_MAX) => (false, (c as usize) & MAX_FIXARRAY_SIZE),
+            ARRAY_16 => (false, self.fetch_u16()?.into()),
+            ARRAY_32 => (false, self.fetch_u32()?.try_into()?),
+            _ => return Err(Error::ExpectedStruct)
+        };
+        let access = CountedAccess::new(self, len);
+        if map {
+            visitor.visit_map(access)
+        }
+        else {
+            visitor.visit_seq(access)
+        }
+    }
+
+    fn deserialize_enum<V>(
+        self,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        const FIXMAP_1: u8 = FIXMAP|1;
+        match self.peek()? {
+            FIXMAP_1 => {
+                self.eat_some(1);
+                visitor.visit_enum(VariantAccess { de: self })
+            }
+            _ => visitor.visit_enum(UnitVariantAccess { de: self })
+        }
+    }
+
+    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        match self.peek()? {
+            MIN_POSFIXINT..=MAX_POSFIXINT|
+            UINT_8|
+            UINT_16|
+            UINT_32 => self.deserialize_u32(visitor),
+            FIXSTR..=FIXSTR_MAX|
+            STR_8|
+            STR_16|
+            STR_32  => self.deserialize_str(visitor),
+            _ => Err(Error::ExpectedIdentifier)
+        }
+    }
+
+    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        self.eat_item()?;
+        visitor.visit_unit()
+    }
+}
+
+struct CountedAccess<'a, 'de: 'a> {
+    de: &'a mut Deserializer<'de>,
+    count: Option<NonZeroUsize>,
+}
+
+impl<'a, 'de> CountedAccess<'a, 'de> {
+    fn new(de: &'a mut Deserializer<'de>, count: usize) -> Self {
+        CountedAccess {
+            de,
+            count: NonZeroUsize::new(count),
+        }
+    }
+}
+
+impl<'de, 'a> SeqAccess<'de> for CountedAccess<'a, 'de> {
+    type Error = Error;
+
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>>
+        where T: DeserializeSeed<'de>
+    {
+        if let Some(len) = self.count {
+            self.count = NonZeroUsize::new(len.get() - 1);
+            return seed.deserialize(&mut *self.de).map(Some)
+        }
+        Ok(None)
+    }
+}
+
+impl<'a, 'de> MapAccess<'de> for CountedAccess<'a, 'de> {
+    type Error = Error;
+
+    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>>
+        where K: DeserializeSeed<'de>
+    {
+        if let Some(len) = self.count {
+            self.count = NonZeroUsize::new(len.get() - 1);
+            return seed.deserialize(&mut *self.de).map(Some)
+        }
+        Ok(None)
+    }
+
+    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value>
+        where V: DeserializeSeed<'de>
+    {
+        seed.deserialize(&mut *self.de)
+    }
+}
+
+struct UnitVariantAccess<'a, 'de> {
+    de: &'a mut Deserializer<'de>,
+}
+
+impl<'a, 'de> de::EnumAccess<'de> for UnitVariantAccess<'a, 'de> {
+    type Error = Error;
+    type Variant = Self;
+
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self)>
+        where V: de::DeserializeSeed<'de>
+    {
+        let variant = seed.deserialize(&mut *self.de)?;
+        Ok((variant, self))
+    }
+}
+
+impl<'a, 'de> de::VariantAccess<'de> for UnitVariantAccess<'a, 'de> {
+    type Error = Error;
+
+    fn unit_variant(self) -> Result<()> {
+        Ok(())
+    }
+
+    fn newtype_variant_seed<T>(self, _seed: T) -> Result<T::Value>
+        where T: de::DeserializeSeed<'de>
+    {
+        Err(Error::InvalidType)
+    }
+
+    fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value>
+        where V: de::Visitor<'de>
+    {
+        Err(Error::InvalidType)
+    }
+
+    fn struct_variant<V>(self, _fields: &'static [&'static str], _visitor: V) -> Result<V::Value>
+        where V: de::Visitor<'de>
+    {
+        Err(Error::InvalidType)
+    }
+}
+
+struct VariantAccess<'a, 'de> {
+    de: &'a mut Deserializer<'de>,
+}
+
+impl<'a, 'de> de::EnumAccess<'de> for VariantAccess<'a, 'de> {
+    type Error = Error;
+    type Variant = Self;
+
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self)>
+        where V: de::DeserializeSeed<'de>
+    {
+        let variant = seed.deserialize(&mut *self.de)?;
+        Ok((variant, self))
+    }
+}
+
+impl<'a, 'de> de::VariantAccess<'de> for VariantAccess<'a, 'de> {
+    type Error = Error;
+
+    fn unit_variant(self) -> Result<()> {
+        Err(Error::InvalidType)
+    }
+
+    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value>
+        where T: de::DeserializeSeed<'de>
+    {
+        seed.deserialize(self.de)
+    }
+
+    fn tuple_variant<V>(self, _len: usize, visitor: V) -> Result<V::Value>
+        where V: de::Visitor<'de>
+    {
+        de::Deserializer::deserialize_seq(self.de, visitor)
+    }
+
+    fn struct_variant<V>(self, fields: &'static [&'static str], visitor: V) -> Result<V::Value>
+        where V: de::Visitor<'de>
+    {
+        de::Deserializer::deserialize_struct(self.de, "", fields, visitor)
+    }
+}

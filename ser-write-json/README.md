@@ -40,3 +40,5 @@ The JSON deserializer is available in 4 flavors depending on how do you want to 
 * `from_mut_slice_with_decoder` - a custom decoder can be provided.
 
 Deserializer can also deserialize bytes in-place from a JSON array of numbers regardless of the chosen implementation.
+
+Deserializer supports self-describing formats.

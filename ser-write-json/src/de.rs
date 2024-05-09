@@ -1,12 +1,11 @@
 //! JSON serde deserializer
-#![allow(unused_imports)]
 use core::cell::Cell;
 // use std::println;
 
 use serde::forward_to_deserialize_any;
 use serde::de::{SeqAccess, MapAccess, DeserializeSeed};
 use core::ops::Neg;
-use core::slice::{from_raw_parts, from_raw_parts_mut};
+use core::slice::from_raw_parts_mut;
 use core::str::{Utf8Error, FromStr};
 use core::{fmt, str};
 
@@ -922,12 +921,8 @@ impl<'de, 'a, P> de::Deserializer<'de> for &'a mut Deserializer<'de, P>
         if b'"' == self.eat_whitespace()? {
             self.eat_some(1);
             let s = self.parse_str_content()?;
-            if let Some(ch) = s.chars().next() {
-                if ch.len_utf8() == s.len() {
-                    return visitor.visit_char(ch)
-                }
-            }
-            Err(Error::InvalidLength)
+            let ch = char::from_str(s).map_err(|_| Error::InvalidLength)?;
+            visitor.visit_char(ch)
         }
         else {
             Err(Error::ExpectedString)
@@ -1083,7 +1078,11 @@ impl<'de, 'a, P> de::Deserializer<'de> for &'a mut Deserializer<'de, P>
     ) -> Result<V::Value>
         where V: Visitor<'de>
     {
-        self.deserialize_map(visitor)
+        match self.eat_whitespace()? {
+            b'{' => self.deserialize_map(visitor),
+            b'[' => self.deserialize_seq(visitor),
+            _ => Err(Error::ExpectedObject)
+        }
     }
 
     fn deserialize_enum<V>(
@@ -1153,8 +1152,6 @@ impl<'a, 'de, P> CommaSeparated<'a, 'de, P> {
     }
 }
 
-// `SeqAccess` is provided to the `Visitor` to give it the ability to iterate
-// through elements of the sequence.
 impl<'de, 'a, P> SeqAccess<'de> for CommaSeparated<'a, 'de, P> 
     where P: StringByteDecoder<'de>
 {
@@ -1185,8 +1182,6 @@ impl<'de, 'a, P> SeqAccess<'de> for CommaSeparated<'a, 'de, P>
     }
 }
 
-// `MapAccess` is provided to the `Visitor` to give it the ability to iterate
-// through entries of the map.
 impl<'a, 'de, P> MapAccess<'de> for CommaSeparated<'a, 'de, P> 
     where P: StringByteDecoder<'de>
 {
