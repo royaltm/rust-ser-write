@@ -1,7 +1,7 @@
 //! A JSON (compact) serde serializer for [`ser-write`](`ser_write`) and a JSON deserializer for convenience.
 /*!
 
-Serializer types:
+[`Serializer`] types:
 
 | Serde type ->     | JSON type
 |-------------------|--------------------
@@ -25,11 +25,11 @@ Serializer types:
 | `tuple variant`   | `{"Name": array}`
 | `struct variant`  | `{"Name": object}`
 
-Deserializer supports self-describing formats (`deserialize_any`).
+[`Deserializer`] supports self-describing formats (`deserialize_any`).
 
-Deserializer deserializes structs from both JSON objects or arrays.
+[`Deserializer`] deserializes structs from both JSON objects or arrays.
 
-Deserializer types:
+[`Deserializer`] types:
 
 | JSON type ->      | Serde type (depending on context)
 |-------------------|----------------------------------------
@@ -41,6 +41,8 @@ Deserializer types:
 | `object`          | `enum variant`,`struct variant`,`map-like`,`struct`
 | `T`               | `NewType(JSON -> T)`, `Some(JSON -> T)`
 
+[`Serializer`]: ser::Serializer
+[`Deserializer`]: de::Deserializer
 */
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]

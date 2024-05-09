@@ -262,7 +262,7 @@ impl<W, B> Serializer<W, B> {
     pub fn into_inner(self) -> W {
         self.output
     }
-    /// Provide access to the inner writer for implementors of [`ByteEncoder`].
+    /// Provide access to the inner writer for implementors of [`ByteEncoder`] and more.
     #[inline(always)]
     pub fn writer(&mut self) -> &mut W {
         &mut self.output

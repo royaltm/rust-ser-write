@@ -1,4 +1,57 @@
 //! A MessagePack serde serializer for [`ser-write`](`ser_write`) and a deserializer for convenience.
+/*!
+
+[`Serializer`] types:
+
+| Serde type ->     | MessagePack type
+|-------------------|--------------------
+| `()`              | `nil`
+| `Unit` struct     | `nil`
+| `bool`            | `bool`
+| `NewType(T)`      | `T` -> `MessagePack`
+| `None`            | `nil`
+| `Some(T)`         | `T` -> `MessagePack`
+| `u8`-`u64`        | `uint` (smallest representation)
+| `i8`-`i64`        | `int`, `uint` (sm. repr.)
+| `f23`             | `float-32`
+| `f64`             | `float-64`
+| `str`             | `str`
+| `bytes`           | `bin`
+| `array`, `tuple`  | `array` (sm. repr.)
+| `seq`-like        | `array` (sm. repr.)
+| `map`-like        | `map` (sm. repr.)
+| `struct`          | `map` or `array` (depending on implementation)
+| `unit variant`    | `str` or `uint` (depending on implementation)
+| `newtype variant` | `fixmap:1` `variant`, `T` (`variant`: `str` or `uint` impl. dep.)
+| `tuple variant`   | `fixmap:1` `variant`, `array` (impl. dep.)
+| `struct variant`  | `fixmap:1` `variant`, `struct` (impl. dep.)
+
+Currently neither [`Serializer`] nor [`Deserializer`] supports MessagePack extension types.
+
+[`Deserializer`] supports self-describing formats (`deserialize_any`).
+
+[`Deserializer`] deserializes structs from both MessagePack maps or arrays using
+both `uint` or `str` as field identifiers.
+
+[`Deserializer`] types:
+
+| MessagePack type -> | Serde type (depending on context)
+|---------------------|----------------------------------------
+| `nil`               | `unit`,`none`,`NaN`
+| `bool`              | `bool`
+| `fixint`, `int`     | `f64`,`f32`,`u8`-`u64`,`i8`-`i64`
+| `float-32`          | `f64` or `f32`
+| `float-64`          | `f64` or `f32`
+| `str`               | `str`, `enum variant`, `field name`
+| `bin`               | `bytes` (`&[u8]`, `Vec<u8>` with `std` or `alloc`)
+| `array`             | `array`,`tuple`,`tuple struct`,`typle variant`,`seq-like`,`struct`
+| `map`               | `enum variant`,`struct variant`,`map-like`,`struct`
+| `T`                 | `NewType(T)`, `Some(T)`
+| `fixext`, `ext`     | Unsupported
+
+[`Serializer`]: ser::VerboseSerializer
+[`Deserializer`]: de::Deserializer
+*/
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

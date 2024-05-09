@@ -33,7 +33,7 @@ pub fn from_slice<'a, T>(input: &'a[u8]) -> Result<(T, usize)>
 /// Deserialize an instance of type `T` from a slice of bytes in a MessagePack format.
 ///
 /// Return a tuple with `(value, tail)`, where `tail` is the tail of the input beginning
-/// at the byte following the last byte of the deserialized input.
+/// at the byte following the last byte of the serialized data.
 ///
 /// Any `&str` or `&[u8]` in the returned type will contain references to the provided slice.
 pub fn from_slice_split_tail<'a, T>(input: &'a[u8]) -> Result<(T, &'a[u8])>
@@ -51,7 +51,7 @@ pub fn from_slice_split_tail<'a, T>(input: &'a[u8]) -> Result<(T, &'a[u8])>
 /// * deserializes enum variants and struct fields from MessagePack strings or integers.
 /// * deserializes integers from any MessagePack integer type as long as the number can be casted safely
 /// * deserializes floats from any MessagePack integer or float types
-/// * deserializes floats as NaN from nil
+/// * deserializes floats as `NaN` from `nil`
 pub struct Deserializer<'de> {
     input: &'de[u8],
     index: usize

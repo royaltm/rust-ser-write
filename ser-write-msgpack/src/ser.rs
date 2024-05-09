@@ -166,14 +166,20 @@ macro_rules! implement_serializer {
     ($serializer:ident, $struct_serializer:ident) => {
 
 impl<W> $serializer<W> {
+    /// Create a new `Serializer` with the given `output` that should implement [`SerWrite`].
     #[inline(always)]
     pub fn new(output: W) -> Self {
         $serializer { output }
     }
-
+    /// Destruct self returning the `output` object.
     #[inline(always)]
     pub fn into_inner(self) -> W {
         self.output
+    }
+    /// Provide access to the inner writer.
+    #[inline(always)]
+    pub fn writer(&mut self) -> &mut W {
+        &mut self.output
     }
 }
 

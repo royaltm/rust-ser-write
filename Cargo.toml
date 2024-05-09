@@ -27,6 +27,11 @@ heapless = { version = "0.8.0", default-features = false, optional = true }
 
 [workspace]
 resolver = "2"
+default-members = [
+  ".",
+  "ser-write-json",
+  "ser-write-msgpack"
+]
 members = [
   ".",
   "ser-write-json",
