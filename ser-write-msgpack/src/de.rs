@@ -94,7 +94,7 @@ pub enum Error {
     ExpectedStruct,
     /// Expected struct or variant identifier
     ExpectedIdentifier,
-    /// Trailing unserialized array or map elements
+    /// Trailing unserialized array elements
     TrailingElements,
     /// Invalid length
     InvalidLength,
@@ -1589,5 +1589,129 @@ mod tests {
         assert_eq!(input, b"");
         // error
         assert_eq!(from_slice_split_tail::<()>(input), Err(Error::UnexpectedEof));
+    }
+
+    #[test]
+    fn test_de_ignoring_extra_fields() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Temperature {
+            temp: u32,
+        }
+        let input = &[
+            0x8F,
+            0xA4,b't',b'e',b'm',b'p', 20,
+            0xA1,b'n', 0xC0,
+            0xA1,b't', 0xC2,
+            0xA1,b'f', 0xC3,
+            0xA4,b'f',b'i',b'x',b'+', 0x7F,
+            0xA4,b'f',b'i',b'x',b'-', -32i8 as _,
+            0xA2,b'u',b'8',      0xCC,0xFF,
+            0xA3,b'u',b'1',b'6', 0xCD,0xFF,0xFF,
+            0xA3,b'u',b'3',b'2', 0xCE,0xFF,0xFF,0xFF,0xFF,
+            0xA3,b'u',b'6',b'4', 0xCF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+            0xA2,b'i',b'8',      0xD0,0xFF,
+            0xA3,b'i',b'1',b'6', 0xD1,0xFF,0xFF,
+            0xA3,b'i',b'3',b'2', 0xD2,0xFF,0xFF,0xFF,0xFF,
+            0xA3,b'i',b'6',b'4', 0xD3,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+            0xA3,b's',b't',b'r', 0xBF, b'J',b'a',b'c',b'k',b'd',b'a',b'w',b's',
+                                       b'l',b'o',b'v',b'e',
+                                       b'm',b'y',
+                                       b'b',b'i',b'g',
+                                       b's',b'p',b'h',b'i',b'n',b'x',
+                                       b'o',b'f',
+                                       b'q',b'u',b'a',b'r',b't',b'z'
+        ];
+        assert_eq!(
+            from_slice(input),
+            Ok((Temperature { temp: 20 }, input.len()))
+        );
+        let input = &[
+            0x8F,
+            0xA1,b'n', 0xC0,
+            0xA1,b't', 0xC2,
+            0xA1,b'f', 0xC3,
+            0xA4,b'f',b'i',b'x',b'+', 0x7F,
+            0xA4,b'f',b'i',b'x',b'-', -32i8 as _,
+            0xA2,b'u',b'8',      0xCC,0xFF,
+            0xA3,b'u',b'1',b'6', 0xCD,0xFF,0xFF,
+            0xA3,b'u',b'3',b'2', 0xCE,0xFF,0xFF,0xFF,0xFF,
+            0xA3,b'u',b'6',b'4', 0xCF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+            0xA2,b'i',b'8',      0xD0,0xFF,
+            0xA3,b'i',b'1',b'6', 0xD1,0xFF,0xFF,
+            0xA3,b'i',b'3',b'2', 0xD2,0xFF,0xFF,0xFF,0xFF,
+            0xA3,b'i',b'6',b'4', 0xD3,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+            0xA3,b's',b't',b'r', 0xBF, b'J',b'a',b'c',b'k',b'd',b'a',b'w',b's',
+                                       b'l',b'o',b'v',b'e',
+                                       b'm',b'y',
+                                       b'b',b'i',b'g',
+                                       b's',b'p',b'h',b'i',b'n',b'x',
+                                       b'o',b'f',
+                                       b'q',b'u',b'a',b'r',b't',b'z',
+            0xA4,b't',b'e',b'm',b'p', 20
+        ];
+        assert_eq!(
+            from_slice(input),
+            Ok((Temperature { temp: 20 }, input.len()))
+        );
+        let input = &[
+            0x89,
+            0xA4,b't',b'e',b'm',b'p', 0xCC, 220,
+            0xA3,b'f',b'3',b'2', 0xCA,0x00,0x00,0x00,0x00,
+            0xA3,b'f',b'6',b'4', 0xCB,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0xA2,b's',b'8', 0xD9,0x01,b'-',
+            0xA3,b's',b'1',b'6', 0xDA,0x00,0x01,b'-',
+            0xA3,b's',b'3',b'2', 0xDB,0x00,0x00,0x00,0x01,b'-',
+            0xA2,b'b',b'8', 0xC4,0x01,0x80,
+            0xA3,b'b',b'1',b'6', 0xC5,0x00,0x01,0x80,
+            0xA3,b'b',b'3',b'2', 0xC6,0x00,0x00,0x00,0x01,0x80,
+        ];
+        assert_eq!(
+            from_slice(input),
+            Ok((Temperature { temp: 220 }, input.len()))
+        );
+        let input = &[
+            0x89,
+            0xA1,b'a', 0x90,
+            0xA2,b'a',b'1', 0x91,0x00,
+            0xA2,b'a',b's', 0xDC,0x00,0x02, 0xA0, 0xA3,b'1',b'2',b'3',
+            0xA2,b'a',b'l', 0xDD,0x00,0x00,0x00,0x02, 0xA0, 0xA3,b'1',b'2',b'3',
+            0xA1,b'm', 0x80,
+            0xA2,b'm',b'1', 0x81,0x00,0xA0,
+            0xA2,b'm',b's', 0xDE,0x00,0x02, 0x00,0xA0, 0x01,0xA3,b'1',b'2',b'3',
+            0xA2,b'm',b'l', 0xDF,0x00,0x00,0x00,0x02, 0xA1,b'x', 0x92,0xC2,0xC3,
+                                                      0xA1,b'y', 0x91,0xC0,
+            0xA4,b't',b'e',b'm',b'p', 0xCC, 220,
+        ];
+        assert_eq!(
+            from_slice(input),
+            Ok((Temperature { temp: 220 }, input.len()))
+        );
+        let input = &[
+            0x8B,
+            0xA3,b'f',b'3',b'2', 0xCA,0x00,0x00,0x00,0x00,
+            0xA3,b'f',b'6',b'4', 0xCB,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0xA2,b'e',b'8', 0xC7,0x01,0x7F,b'.',
+            0xA3,b'e',b'1',b'6', 0xC8,0x00,0x01,0x7F,b'.',
+            0xA3,b'e',b'3',b'2', 0xC9,0x00,0x00,0x00,0x01,0x7F,b'.',
+            0xA2,b'x',b'1', 0xD4,0x7F,b'.',
+            0xA2,b'x',b'2', 0xD5,0x7F,b'.',b'.',
+            0xA2,b'x',b'4', 0xD6,0x7F,b'.',b'.',b'.',b'.',
+            0xA2,b'x',b'8', 0xD7,0x7F,b'.',b'.',b'.',b'.',b'.',b'.',b'.',b'.',
+            0xA3,b'x',b'1',b'6', 0xD8,0x7F,b'.',b'.',b'.',b'.',b'.',b'.',b'.',b'.',
+                                           b'.',b'.',b'.',b'.',b'.',b'.',b'.',b'.',
+            0xA4,b't',b'e',b'm',b'p', 0xCD,2,8,
+        ];
+        assert_eq!(
+            from_slice(input),
+            Ok((Temperature { temp: 520 }, input.len()))
+        );
+        assert_eq!(
+            from_slice::<Temperature>(&[
+                0x82,
+                0xA4,b't',b'e',b'm',b'p', 20,
+                0xA1,b'_', 0xC1
+            ]),
+            Err(Error::ReservedCode)
+        );
     }
 }

@@ -1,16 +1,25 @@
 ser-write-msgpack
 =================
 
-This crate provides a `no_std` compact and protable [MessagePack](https://msgpack.org) serializer for [serde](https://crates.io/crates/serde) using `SerWrite` as a writer and a deserializer for convenience.
+This crate provides a `no_std` friendly [MessagePack](https://msgpack.org) serializers for [serde](https://crates.io/crates/serde) using `SerWrite` as a writer and a deserializer for convenience.
+
+
+Usage
+-----
+
+```
+[dependencies]
+ser-write-msgpack = { version = "0.1", default-features = false }
+```
 
 
 Serializer
 ----------
 
-There are 2 serializers available:
+`ser-write-msgpack` comes with 2 serializers:
 
-* `to_writer` - serializes structs to arrays and enum variants as indexes
-* `to_writer_named` - serializes structs to maps with field names and enum variants as strings
+* `to_writer` - serializes structs to arrays and enum variants as indexes - the `compact` serializer,
+* `to_writer_named` - serializes structs to maps with field names and enum variants as strings - the `portable` serializer.
 
 Features:
 
@@ -32,4 +41,4 @@ The MessagePack deserializer expects a MessagePack encoded slice of bytes. `&str
 
 Deserializer supports self-describing formats.
 
-Deserializer deserializes structs from both maps and arrays.
+Deserializer deserializes structs from both maps and arrays using either strings or indexes as variant or field names.

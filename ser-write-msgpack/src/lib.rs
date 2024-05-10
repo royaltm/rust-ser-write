@@ -27,6 +27,7 @@
 | `struct variant`  | `fixmap:1` `variant`, `struct` (impl. dep.)
 
 Currently neither [`Serializer`] nor [`Deserializer`] supports MessagePack extension types.
+The `ext` and `fixext` types are properly recognized and skipped over when a struct field is ignored.
 
 [`Deserializer`] supports self-describing formats (`deserialize_any`).
 
@@ -49,10 +50,11 @@ both `uint` or `str` as field identifiers.
 | `T`                 | `NewType(T)`, `Some(T)`
 | `fixext`, `ext`     | Unsupported
 
-[`Serializer`]: ser::VerboseSerializer
+[`Serializer`]: ser::CompactSerializer
 [`Deserializer`]: de::Deserializer
 */
 #![no_std]
+#![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(feature = "std")]

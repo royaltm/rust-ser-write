@@ -20,7 +20,7 @@ pub struct CompactSerializer<W> {
 }
 
 /// MessagePack serializer serializing structs to maps with field names and enum variants as names
-pub struct VerboseSerializer<W> {
+pub struct PortableSerializer<W> {
     output: W
 }
 
@@ -66,7 +66,7 @@ pub fn to_writer_named<W, T>(writer: W, value: &T) -> Result<(), W::Error>
           <W as SerWrite>::Error: fmt::Display+fmt::Debug,
           T: Serialize
 {
-    let mut serializer = VerboseSerializer::new(writer);
+    let mut serializer = PortableSerializer::new(writer);
     value.serialize(&mut serializer)
 }
 
@@ -151,12 +151,12 @@ impl<W: SerWrite> CompactSerializer<W> {
     }
 }
 
-impl<W: SerWrite> VerboseSerializer<W> {
+impl<W: SerWrite> PortableSerializer<W> {
     fn serialize_variant(&mut self, _variant_index: u32, variant_name: &'static str) -> Result<(), W::Error> {
         write_str(&mut self.output, variant_name)
     }
 
-    fn serialize_struct<'a>(&'a mut self, len: usize) -> Result<SerializeStructMap<'a, VerboseSerializer<W>>, W::Error> {
+    fn serialize_struct<'a>(&'a mut self, len: usize) -> Result<SerializeStructMap<'a, PortableSerializer<W>>, W::Error> {
         write_map_len(&mut self.output, len)?;
         Ok(SerializeStructMap { ser: self })
     }
@@ -532,7 +532,7 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W>
 } /* implement_serializer */
 
 implement_serializer!(CompactSerializer, SerializeStructArray);
-implement_serializer!(VerboseSerializer, SerializeStructMap);
+implement_serializer!(PortableSerializer, SerializeStructMap);
 
 #[inline]
 fn write_u32<W: SerWrite>(output: &mut W, v: u32) -> Result<(), W::Error> {
