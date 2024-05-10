@@ -164,99 +164,101 @@ fn handle_tail<'a, I>(mut dcount: usize, mut packed: u32, mut dest: I) -> (usize
 
 #[cfg(test)]
 mod tests {
-    use std::{vec::Vec};
     use super::*;
+    use crate::ser_write::SliceWriter;
 
     #[test]
     fn test_base64_encode() {
-        let vec = &mut Vec::new();
-        encode(vec, &[]).unwrap();
-        assert_eq!(&*vec, b"");
-        encode(vec, &[0]).unwrap();
-        assert_eq!(&*vec, b"AA");
-        vec.clear();
-        encode(vec, &[1]).unwrap();
-        assert_eq!(&*vec, b"AQ");
-        vec.clear();
-        encode(vec, &[0,0]).unwrap();
-        assert_eq!(&*vec, b"AAA");
-        vec.clear();
-        encode(vec, &[0,0,0]).unwrap();
-        assert_eq!(&*vec, b"AAAA");
-        vec.clear();
-        encode(vec, &[0,0,0,0]).unwrap();
-        assert_eq!(&*vec, b"AAAAAA");
-        vec.clear();
-        encode(vec, &[1,2]).unwrap();
-        assert_eq!(&*vec, b"AQI");
-        vec.clear();
-        encode(vec, &[1,2,3]).unwrap();
-        assert_eq!(&*vec, b"AQID");
-        vec.clear();
-        encode(vec, &[1,2,3,4]).unwrap();
-        assert_eq!(&*vec, b"AQIDBA");
-        vec.clear();
-        encode(vec, &[0x80]).unwrap();
-        assert_eq!(&*vec, b"gA");
-        vec.clear();
-        encode(vec, &[0x80,0x81]).unwrap();
-        assert_eq!(&*vec, b"gIE");
-        vec.clear();
-        encode(vec, &[0x80,0x81,0x82]).unwrap();
-        assert_eq!(&*vec, b"gIGC");
-        vec.clear();
-        encode(vec, &[0xFF]).unwrap();
-        assert_eq!(&*vec, b"/w");
-        vec.clear();
-        encode(vec, &[0xFF,0xFF]).unwrap();
-        assert_eq!(&*vec, b"//8");
-        vec.clear();
-        encode(vec, &[0xFF,0xFF,0xFF]).unwrap();
-        assert_eq!(&*vec, b"////");
+        let mut buf = [0u8;6];
+        let writer = &mut SliceWriter::new(&mut buf);
+        encode(writer, &[]).unwrap();
+        assert_eq!(writer.as_ref(), b"");
+        encode(writer, &[0]).unwrap();
+        assert_eq!(writer.as_ref(), b"AA");
+        writer.clear();
+        encode(writer, &[1]).unwrap();
+        assert_eq!(writer.as_ref(), b"AQ");
+        writer.clear();
+        encode(writer, &[0,0]).unwrap();
+        assert_eq!(writer.as_ref(), b"AAA");
+        writer.clear();
+        encode(writer, &[0,0,0]).unwrap();
+        assert_eq!(writer.as_ref(), b"AAAA");
+        writer.clear();
+        encode(writer, &[0,0,0,0]).unwrap();
+        assert_eq!(writer.as_ref(), b"AAAAAA");
+        writer.clear();
+        encode(writer, &[1,2]).unwrap();
+        assert_eq!(writer.as_ref(), b"AQI");
+        writer.clear();
+        encode(writer, &[1,2,3]).unwrap();
+        assert_eq!(writer.as_ref(), b"AQID");
+        writer.clear();
+        encode(writer, &[1,2,3,4]).unwrap();
+        assert_eq!(writer.as_ref(), b"AQIDBA");
+        writer.clear();
+        encode(writer, &[0x80]).unwrap();
+        assert_eq!(writer.as_ref(), b"gA");
+        writer.clear();
+        encode(writer, &[0x80,0x81]).unwrap();
+        assert_eq!(writer.as_ref(), b"gIE");
+        writer.clear();
+        encode(writer, &[0x80,0x81,0x82]).unwrap();
+        assert_eq!(writer.as_ref(), b"gIGC");
+        writer.clear();
+        encode(writer, &[0xFF]).unwrap();
+        assert_eq!(writer.as_ref(), b"/w");
+        writer.clear();
+        encode(writer, &[0xFF,0xFF]).unwrap();
+        assert_eq!(writer.as_ref(), b"//8");
+        writer.clear();
+        encode(writer, &[0xFF,0xFF,0xFF]).unwrap();
+        assert_eq!(writer.as_ref(), b"////");
     }
 
-    fn test_decode(vec: &mut Vec<u8>, encoded: &[u8], expected: (usize, usize), decoded: &[u8]) {
+    fn test_decode(buf: &mut[u8], encoded: &[u8], expected: (usize, usize), decoded: &[u8]) {
         for i in 0..=4 {
-            vec.clear();
-            vec.extend_from_slice(encoded);
+            let mut vec = SliceWriter::new(buf);
+            vec.write(encoded).unwrap();
             for _ in 0..i {
-                vec.push(b'=');
+                vec.write_byte(b'=').unwrap();
             }
-            assert_eq!(decode(vec.as_mut_slice()), expected);
-            assert_eq!(&vec[..expected.0], decoded);
+            let output = vec.split().0;
+            assert_eq!(decode(output), expected);
+            assert_eq!(&output[..expected.0], decoded);
             if i == 0 {
-                assert_eq!(vec.len(), expected.1);
+                assert_eq!(output.len(), expected.1);
             }
             else {
-                assert_eq!(vec[expected.1], b'=');
+                assert_eq!(output[expected.1], b'=');
             }
         }
     }
 
     #[test]
     fn test_base64_decode() {
-        let vec = &mut Vec::new();
-        test_decode(vec, b"", (0, 0), &[]);
-        test_decode(vec, b"A", (0, 1), &[]);
-        test_decode(vec, br"/", (0, 1), &[]);
-        test_decode(vec, br"AA", (1,2), &[0]);
-        test_decode(vec, br"AAA", (2,3), &[0,0]);
-        test_decode(vec, br"AAAA", (3,4), &[0,0,0]);
-        test_decode(vec, br"AAAAA", (3,5), &[0,0,0]);
-        test_decode(vec, br"AAAAAA", (4,6), &[0,0,0,0]);
-        test_decode(vec, br"AQ", (1,2), &[1]);
-        test_decode(vec, br"AQI", (2,3), &[1,2]);
-        test_decode(vec, br"AQID", (3,4), &[1,2,3]);
-        test_decode(vec, br"AQIDB", (3,5), &[1,2,3]);
-        test_decode(vec, br"AQIDBA", (4,6), &[1,2,3,4]);
-        test_decode(vec, br"gA", (1,2), &[0x80]);
-        test_decode(vec, br"gIE", (2,3), &[0x80,0x81]);
-        test_decode(vec, br"gIGC", (3,4), &[0x80,0x81,0x82]);
-        test_decode(vec, br"/w", (1,2), &[0xFF]);
-        test_decode(vec, br"//8", (2,3), &[0xFF,0xFF]);
-        test_decode(vec, br"////", (3,4), &[0xFF,0xFF,0xFF]);
-        test_decode(vec, br"/////w", (4,6), &[0xFF,0xFF,0xFF,0xFF]);
-        test_decode(vec, br"//////8", (5,7), &[0xFF,0xFF,0xFF,0xFF,0xFF]);
-        test_decode(vec, br"////////", (6,8), &[0xFF,0xFF,0xFF,0xFF,0xFF,0xFF]);
+        let buf = &mut [0u8;12];
+        test_decode(buf, b"", (0, 0), &[]);
+        test_decode(buf, b"A", (0, 1), &[]);
+        test_decode(buf, br"/", (0, 1), &[]);
+        test_decode(buf, br"AA", (1,2), &[0]);
+        test_decode(buf, br"AAA", (2,3), &[0,0]);
+        test_decode(buf, br"AAAA", (3,4), &[0,0,0]);
+        test_decode(buf, br"AAAAA", (3,5), &[0,0,0]);
+        test_decode(buf, br"AAAAAA", (4,6), &[0,0,0,0]);
+        test_decode(buf, br"AQ", (1,2), &[1]);
+        test_decode(buf, br"AQI", (2,3), &[1,2]);
+        test_decode(buf, br"AQID", (3,4), &[1,2,3]);
+        test_decode(buf, br"AQIDB", (3,5), &[1,2,3]);
+        test_decode(buf, br"AQIDBA", (4,6), &[1,2,3,4]);
+        test_decode(buf, br"gA", (1,2), &[0x80]);
+        test_decode(buf, br"gIE", (2,3), &[0x80,0x81]);
+        test_decode(buf, br"gIGC", (3,4), &[0x80,0x81,0x82]);
+        test_decode(buf, br"/w", (1,2), &[0xFF]);
+        test_decode(buf, br"//8", (2,3), &[0xFF,0xFF]);
+        test_decode(buf, br"////", (3,4), &[0xFF,0xFF,0xFF]);
+        test_decode(buf, br"/////w", (4,6), &[0xFF,0xFF,0xFF,0xFF]);
+        test_decode(buf, br"//////8", (5,7), &[0xFF,0xFF,0xFF,0xFF,0xFF]);
+        test_decode(buf, br"////////", (6,8), &[0xFF,0xFF,0xFF,0xFF,0xFF,0xFF]);
    }
 }

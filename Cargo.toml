@@ -20,6 +20,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["std"]
 std = []
 alloc = []
+arrayvec = ["dep:arrayvec"]
+heapless = ["dep:heapless"]
 
 [dependencies]
 arrayvec = { version = "0.7", default-features = false, optional = true }

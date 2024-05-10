@@ -1,19 +1,22 @@
 ser-write
 =========
 
-Writer-style serde serializers and deserializers for convenience designed with embedded (no-std) targets in mind.
+Writer-style serializers and deserializers for convenience designed with embedded (no-std) targets in mind.
 
-* Writer-style serializers use the common writer trait.
+* Writer-style serializers use the common writer trait found in this crate.
 * Designed for `no-std`.
 * Fully supports `std` or `alloc` when enabled for code portability and testablilty.
 * For each serializer a deserializer is provided for convenience.
-* Embedded projects can implement `SerWrite` trait for their own custom containers, frame builders and more.
+* Embedded projects can implement `SerWrite` trait for custom containers, frame builders and more.
 
-This crate provides the trait - `SerWrite` which should be used by serializers.
+This crate provides:
 
-On the other end, embedded projects can implement `SerWrite` for their own exotic containers.
+* the trait - `SerWrite` which should be used by serializers to write the serialized output,
+* `SerError` - a convenient error type,
+* `SliceWriter` - a convenient slice writer object implementing `SerWrite`,
+* `SerWrite` implementations for foreign types.
 
-Depending on the selected features, `SerWrite` is implemented for:
+Depending on the enabled crate features, `SerWrite` is implemented for:
 
 * `SliceWriter` - example slice writer implementation,
 * [`arrayvec::ArrayVec<u8,CAP>`](https://crates.io/crates/arrayvec) - `arrayvec` feature,
@@ -22,16 +25,35 @@ Depending on the selected features, `SerWrite` is implemented for:
 * `VecDeque<u8>` - `alloc` or `std` feature,
 * `io::Cursor<T: io::Write>` - `std` feature,
 
-`std` and `alloc` features are here to help testing and porting code in different environments.
+
+Usage
+-----
+
+Start by adding a dependency to the serializer:
+
+For example:
+
+```
+[dependencies]
+ser-write-json = { version = "0.1", default-features = false }
+```
+
+If you want to also pull implementations of `SerWrite` for the foreign types add:
+
+```
+ser-write = { version = "0.1", default-features = false, features = ["arrayvec", "heapless"] }
+```
+
+In the above example implementations for: `arrayvec::ArrayVec<u8;_>` and `heapless::Vec<u8>` are selected.
 
 
 Serializers
 -----------
 
-Currently available serializers are:
+Currently available serializers and deserializers are:
 
-* JSON (compact) - [ser-write-json](ser-write-json/)
-* MessagePack - [ser-write-msgpack](ser-write-msgpack/)
+* [JSON](https://json.org) (compact) - [ser-write-json](ser-write-json/)
+* [MessagePack](https://msgpack.org) - [ser-write-msgpack](ser-write-msgpack/)
 
 
 Example

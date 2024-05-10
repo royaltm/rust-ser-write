@@ -1,3 +1,4 @@
+#![cfg(any(feature = "std", feature = "alloc"))]
 use serde::{Serialize, Deserialize};
 use ser_write_json::*;
 use serde_json::{json, Value};

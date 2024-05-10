@@ -68,15 +68,15 @@ pub mod de;
 
 pub use ser_write;
 
-#[cfg(any(feature = "std", feature = "alloc"))]
 pub use ser::{
-    to_vec,
-    to_vec_named
-};
-
-pub use ser::{
+    to_writer_compact,
     to_writer,
     to_writer_named
+};
+
+pub use de::{
+    from_slice,
+    from_slice_split_tail
 };
 
 mod magick {

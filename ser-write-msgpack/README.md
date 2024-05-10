@@ -18,8 +18,9 @@ Serializer
 
 `ser-write-msgpack` comes with 2 serializers:
 
-* `to_writer` - serializes structs to arrays and enum variants as indexes - the `compact` serializer,
-* `to_writer_named` - serializes structs to maps with field names and enum variants as strings - the `portable` serializer.
+* `to_writer_compact` - serializes structs to arrays and enum variants as indexes,
+* `to_writer` - serializes structs to maps with fields and enum variants as indexes,
+* `to_writer_named` - serializes structs to maps with field names and enum variants as strings.
 
 Features:
 
@@ -41,4 +42,4 @@ The MessagePack deserializer expects a MessagePack encoded slice of bytes. `&str
 
 Deserializer supports self-describing formats.
 
-Deserializer deserializes structs from both maps and arrays using either strings or indexes as variant or field names.
+Deserializer deserializes structs from both maps and arrays using either strings or indexes as variant or field identifiers.

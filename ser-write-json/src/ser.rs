@@ -10,7 +10,7 @@ use std::{vec::Vec, string::{String, ToString}};
 use alloc::{vec::Vec, string::{String, ToString}};
 
 use serde::{ser, Serialize};
-use crate::{SerWrite, SerError};
+use crate::SerWrite;
 
 /// JSON serializer serializing bytes to an array of numbers
 pub type SerializerByteArray<W> = Serializer<W, ArrayByteEncoder>;
@@ -47,7 +47,7 @@ pub enum Error<E> {
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
     /// An error passed down from a [`serde::ser::Serialize`] implementation
-    SerializeError(std::string::String),
+    SerializeError(String),
     #[cfg(not(any(feature = "std", feature = "alloc")))]
     SerializeError
 }
@@ -157,7 +157,7 @@ impl ByteEncoder for PassThroughByteEncoder {
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-pub fn to_string<T>(value: &T) -> Result<String, SerError>
+pub fn to_string<T>(value: &T) -> Result<String, ser_write::SerError>
     where T: Serialize + ?Sized
 {
     let mut vec = Vec::new();
@@ -168,7 +168,7 @@ pub fn to_string<T>(value: &T) -> Result<String, SerError>
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-pub fn to_string_hex_bytes<T>(value: &T) -> Result<String, SerError>
+pub fn to_string_hex_bytes<T>(value: &T) -> Result<String, ser_write::SerError>
     where T: Serialize + ?Sized
 {
     let mut vec = Vec::new();
@@ -179,7 +179,7 @@ pub fn to_string_hex_bytes<T>(value: &T) -> Result<String, SerError>
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-pub fn to_string_base64_bytes<T>(value: &T) -> Result<String, SerError>
+pub fn to_string_base64_bytes<T>(value: &T) -> Result<String, ser_write::SerError>
     where T: Serialize + ?Sized
 {
     let mut vec = Vec::new();
@@ -190,7 +190,7 @@ pub fn to_string_base64_bytes<T>(value: &T) -> Result<String, SerError>
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-pub fn to_string_pass_bytes<T>(value: &T) -> Result<String, SerError>
+pub fn to_string_pass_bytes<T>(value: &T) -> Result<String, ser_write::SerError>
     where T: Serialize + ?Sized
 {
     let mut vec = Vec::new();
@@ -843,9 +843,47 @@ static ESCAPE: [u8; 32] = [
 
 #[cfg(test)]
 mod tests {
-    use std::{vec, vec::Vec};
-    use super::*;
+    #[cfg(feature = "std")]
+    use std::vec;
+    #[cfg(all(feature = "alloc",not(feature = "std")))]
+    use alloc::vec;
 
+    use super::*;
+    use crate::ser_write::{SliceWriter, SerError};
+
+    fn to_str<'a, T>(buf: &'a mut[u8], value: &T) -> Result<&'a str, SerError>
+        where T: Serialize + ?Sized
+    {
+        let mut writer = SliceWriter::new(buf);
+        to_writer(&mut writer, value)?;
+        Ok(core::str::from_utf8(writer.split().0).unwrap())
+    }
+
+    fn to_str_hex_bytes<'a, T>(buf: &'a mut[u8], value: &T) -> Result<&'a str, SerError>
+        where T: Serialize + ?Sized
+    {
+        let mut writer = SliceWriter::new(buf);
+        to_writer_hex_bytes(&mut writer, value)?;
+        Ok(core::str::from_utf8(writer.split().0).unwrap())
+    }
+
+    fn to_str_base64_bytes<'a, T>(buf: &'a mut[u8], value: &T) -> Result<&'a str, SerError>
+        where T: Serialize + ?Sized
+    {
+        let mut writer = SliceWriter::new(buf);
+        to_writer_base64_bytes(&mut writer, value)?;
+        Ok(core::str::from_utf8(writer.split().0).unwrap())
+    }
+
+    fn to_str_pass_bytes<'a, T>(buf: &'a mut[u8], value: &T) -> Result<&'a str, SerError>
+        where T: Serialize + ?Sized
+    {
+        let mut writer = SliceWriter::new(buf);
+        to_writer_pass_bytes(&mut writer, value)?;
+        Ok(core::str::from_utf8(writer.split().0).unwrap())
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn test_json_tuple() {
         #[derive(Serialize)]
@@ -863,6 +901,7 @@ mod tests {
         assert_eq!(to_string(&tup).unwrap(), expected);
     }
 
+    #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn test_json_struct() {
         #[derive(Serialize)]
@@ -879,6 +918,7 @@ mod tests {
         assert_eq!(to_string(&test).unwrap(), expected);
     }
 
+    #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn test_json_struct_to_array() {
         use serde::ser::SerializeSeq;
@@ -914,43 +954,55 @@ mod tests {
             Struct { a: u32 },
         }
 
+        let mut buf = [0u8;23];
+        let mut writer = SliceWriter::new(&mut buf);
+
         let u = E::Unit;
-        let expected = r#""Unit""#;
-        assert_eq!(to_string(&u).unwrap(), expected);
+        let expected = br#""Unit""#;
+        to_writer(&mut writer, &u).unwrap();
+        assert_eq!(writer.as_ref(), expected);
 
         let n = E::Newtype(1);
-        let expected = r#"{"Newtype":1}"#;
-        assert_eq!(to_string(&n).unwrap(), expected);
+        let expected = br#"{"Newtype":1}"#;
+        writer.clear();
+        to_writer(&mut writer, &n).unwrap();
+        assert_eq!(writer.as_ref(), expected);
 
-        let t = E::Tuple(1, std::f32::consts::PI);
-        let expected = r#"{"Tuple":[1,3.1415927]}"#;
-        assert_eq!(to_string(&t).unwrap(), expected);
+        let t = E::Tuple(1, core::f32::consts::PI);
+        let expected = br#"{"Tuple":[1,3.1415927]}"#;
+        writer.clear();
+        to_writer(&mut writer, &t).unwrap();
+        assert_eq!(writer.as_ref(), expected);
 
         let s = E::Struct { a: 1 };
-        let expected = r#"{"Struct":{"a":1}}"#;
-        assert_eq!(to_string(&s).unwrap(), expected);
+        let expected = br#"{"Struct":{"a":1}}"#;
+        writer.clear();
+        to_writer(&mut writer, &s).unwrap();
+        assert_eq!(writer.as_ref(), expected);
     }
 
     #[test]
     fn test_json_string() {
+        let mut buf = [0u8;39];
+        let mut writer = SliceWriter::new(&mut buf);
+
         let s = "\"\x00\x08\x09\n\x0C\rłączka\x1f\\\x7f\"";
         let expected = "\"\\\"\\u0000\\b\\t\\n\\f\\rłączka\\u001F\\\\\x7f\\\"\"";
-        assert_eq!(to_string(&s).unwrap(), expected);
+        to_writer(&mut writer, &s).unwrap();
+        assert_eq!(writer.as_ref(), expected.as_bytes());
     }
 
+    #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
-    fn test_json_bytes() {
+    fn test_json_bytes_owned() {
         #[derive(Serialize)]
         struct Test {
             #[serde(with = "serde_bytes")]
-            key: Vec<u8>,
+            key: Vec<u8>
         }
-        let mut vec = Vec::new();
         let expected = r#"[{"key":{"Struct":{"a":1}}}]"#;
         let value = [Test { key: r#"{"Struct":{"a":1}}"#.as_bytes().into() }];
-        to_writer_pass_bytes(&mut vec, &value).unwrap();
-        let s = String::from_utf8(vec).unwrap();
-        assert_eq!(s, expected);
+        assert_eq!(to_string_pass_bytes(&value).unwrap(), expected);
         let expected = r#"[{"key":"7B22537472756374223A7B2261223A317D7D"}]"#;
         assert_eq!(&to_string_hex_bytes(&value).unwrap(), expected);
         let expected = r#"[{"key":"eyJTdHJ1Y3QiOnsiYSI6MX19"}]"#;
@@ -960,20 +1012,109 @@ mod tests {
     }
 
     #[test]
-    fn test_ser_array() {
-        let mut buf = Vec::new();
-        to_writer(&mut buf, &[0, 1, 2]).unwrap();
-        assert_eq!(&buf[..], b"[0,1,2]");
+    fn test_json_bytes() {
+        #[derive(Serialize)]
+        struct Test<'a> {
+            #[serde(with = "serde_bytes")]
+            key: &'a[u8]
+        }
+        let mut buf = [0u8;73];
+        let expected = r#"[{"key":{"Struct":{"a":1}}}]"#;
+        let value = [Test { key: r#"{"Struct":{"a":1}}"#.as_bytes() }];
+        assert_eq!(to_str_pass_bytes(&mut buf, &value).unwrap(), expected);
+        let expected = r#"[{"key":"7B22537472756374223A7B2261223A317D7D"}]"#;
+        assert_eq!(to_str_hex_bytes(&mut buf, &value).unwrap(), expected);
+        let expected = r#"[{"key":"eyJTdHJ1Y3QiOnsiYSI6MX19"}]"#;
+        assert_eq!(to_str_base64_bytes(&mut buf, &value).unwrap(), expected);
+        let expected = r#"[{"key":[123,34,83,116,114,117,99,116,34,58,123,34,97,34,58,49,125,125]}]"#;
+        assert_eq!(to_str(&mut buf, &value).unwrap(), expected);
     }
 
     #[test]
     fn test_ser_bool() {
-        let mut buf = Vec::new();
-        to_writer(&mut buf, &true).unwrap();
-        assert_eq!(&buf[..], b"true");
-        buf.clear();
-        to_writer(&mut buf, &false).unwrap();
-        assert_eq!(&buf[..], b"false");
+        let mut buf = [0u8;6];
+        assert_eq!(to_str(&mut buf, &true).unwrap(), "true");
+        assert_eq!(to_str(&mut buf, &false).unwrap(), "false");
+    }
+
+    #[test]
+    fn test_ser_str() {
+        let mut buf = [0u8;10];
+        assert_eq!(to_str(&mut buf, "hello").unwrap(), r#""hello""#);
+        assert_eq!(to_str(&mut buf, "").unwrap(), r#""""#);
+
+        // Characters unescaped if possible
+        assert_eq!(to_str(&mut buf, "ä").unwrap(), r#""ä""#);
+        assert_eq!(to_str(&mut buf, "৬").unwrap(), r#""৬""#);
+        assert_eq!(to_str(&mut buf, "\u{A0}").unwrap(), "\"\u{A0}\""); // non-breaking space
+        assert_eq!(to_str(&mut buf, "ℝ").unwrap(), r#""ℝ""#); // 3 byte character
+        assert_eq!(to_str(&mut buf, "💣").unwrap(), r#""💣""#); // 4 byte character
+
+        // " and \ must be escaped
+        assert_eq!(
+            to_str(&mut buf, "foo\"bar").unwrap(),
+            r#""foo\"bar""#
+        );
+        assert_eq!(
+            to_str(&mut buf, "foo\\bar").unwrap(),
+            r#""foo\\bar""#
+        );
+
+        // \b, \t, \n, \f, \r must be escaped in their two-character escaping
+        assert_eq!(
+            to_str(&mut buf, " \u{0008} ").unwrap(),
+            r#"" \b ""#
+        );
+        assert_eq!(
+            to_str(&mut buf, " \u{0009} ").unwrap(),
+            r#"" \t ""#
+        );
+        assert_eq!(
+            to_str(&mut buf, " \u{000A} ").unwrap(),
+            r#"" \n ""#
+        );
+        assert_eq!(
+            to_str(&mut buf, " \u{000C} ").unwrap(),
+            r#"" \f ""#
+        );
+        assert_eq!(
+            to_str(&mut buf, " \u{000D} ").unwrap(),
+            r#"" \r ""#
+        );
+
+        // U+0000 through U+001F is escaped using six-character \u00xx uppercase hexadecimal escape sequences
+        assert_eq!(
+            to_str(&mut buf, " \u{0000} ").unwrap(),
+            r#"" \u0000 ""#
+        );
+        assert_eq!(
+            to_str(&mut buf, " \u{0001} ").unwrap(),
+            r#"" \u0001 ""#
+        );
+        assert_eq!(
+            to_str(&mut buf, " \u{0007} ").unwrap(),
+            r#"" \u0007 ""#
+        );
+        assert_eq!(
+            to_str(&mut buf, " \u{000e} ").unwrap(),
+            r#"" \u000E ""#
+        );
+        assert_eq!(
+            to_str(&mut buf, " \u{001D} ").unwrap(),
+            r#"" \u001D ""#
+        );
+        assert_eq!(
+            to_str(&mut buf, " \u{001f} ").unwrap(),
+            r#"" \u001F ""#
+        );
+    }
+
+    #[test]
+    fn test_ser_array() {
+        let mut buf = [0u8;7];
+        let empty: [&str;0] = [];
+        assert_eq!(to_str(&mut buf, &empty).unwrap(), "[]");
+        assert_eq!(to_str(&mut buf, &[0, 1, 2]).unwrap(), "[0,1,2]");
     }
 
     #[test]
@@ -985,86 +1126,16 @@ mod tests {
             #[serde(rename = "number")]
             Number,
         }
+        let mut buf = [0u8;9];
 
         assert_eq!(
-            &*to_string(&Type::Boolean).unwrap(),
+            to_str(&mut buf, &Type::Boolean).unwrap(),
             r#""boolean""#
         );
 
         assert_eq!(
-            &*to_string(&Type::Number).unwrap(),
+            to_str(&mut buf, &Type::Number).unwrap(),
             r#""number""#
-        );
-    }
-
-    #[test]
-    fn test_ser_str() {
-        assert_eq!(&*to_string("hello").unwrap(), r#""hello""#);
-        assert_eq!(&*to_string("").unwrap(), r#""""#);
-
-        // Characters unescaped if possible
-        assert_eq!(&*to_string("ä").unwrap(), r#""ä""#);
-        assert_eq!(&*to_string("৬").unwrap(), r#""৬""#);
-        assert_eq!(&*to_string("\u{A0}").unwrap(), "\"\u{A0}\""); // non-breaking space
-        assert_eq!(&*to_string("ℝ").unwrap(), r#""ℝ""#); // 3 byte character
-        assert_eq!(&*to_string("💣").unwrap(), r#""💣""#); // 4 byte character
-
-        // " and \ must be escaped
-        assert_eq!(
-            &*to_string("foo\"bar").unwrap(),
-            r#""foo\"bar""#
-        );
-        assert_eq!(
-            &*to_string("foo\\bar").unwrap(),
-            r#""foo\\bar""#
-        );
-
-        // \b, \t, \n, \f, \r must be escaped in their two-character escaping
-        assert_eq!(
-            &*to_string(" \u{0008} ").unwrap(),
-            r#"" \b ""#
-        );
-        assert_eq!(
-            &*to_string(" \u{0009} ").unwrap(),
-            r#"" \t ""#
-        );
-        assert_eq!(
-            &*to_string(" \u{000A} ").unwrap(),
-            r#"" \n ""#
-        );
-        assert_eq!(
-            &*to_string(" \u{000C} ").unwrap(),
-            r#"" \f ""#
-        );
-        assert_eq!(
-            &*to_string(" \u{000D} ").unwrap(),
-            r#"" \r ""#
-        );
-
-        // U+0000 through U+001F is escaped using six-character \u00xx uppercase hexadecimal escape sequences
-        assert_eq!(
-            &*to_string(" \u{0000} ").unwrap(),
-            r#"" \u0000 ""#
-        );
-        assert_eq!(
-            &*to_string(" \u{0001} ").unwrap(),
-            r#"" \u0001 ""#
-        );
-        assert_eq!(
-            &*to_string(" \u{0007} ").unwrap(),
-            r#"" \u0007 ""#
-        );
-        assert_eq!(
-            &*to_string(" \u{000e} ").unwrap(),
-            r#"" \u000E ""#
-        );
-        assert_eq!(
-            &*to_string(" \u{001D} ").unwrap(),
-            r#"" \u001D ""#
-        );
-        assert_eq!(
-            &*to_string(" \u{001f} ").unwrap(),
-            r#"" \u001F ""#
         );
     }
 
@@ -1075,8 +1146,10 @@ mod tests {
             led: bool,
         }
 
+        let mut buf = [0u8;12];
+
         assert_eq!(
-            &*to_string(&Led { led: true }).unwrap(),
+            to_str(&mut buf, &Led { led: true }).unwrap(),
             r#"{"led":true}"#
         );
     }
@@ -1088,24 +1161,41 @@ mod tests {
             temperature: i8,
         }
 
+        let mut buf = [0u8;20];
+
         assert_eq!(
-            &*to_string(&Temperature { temperature: 127 }).unwrap(),
+            to_str(&mut buf, &Temperature { temperature: 127 }).unwrap(),
             r#"{"temperature":127}"#
         );
 
         assert_eq!(
-            &*to_string(&Temperature { temperature: 20 }).unwrap(),
+            to_str(&mut buf, &Temperature { temperature: 20 }).unwrap(),
             r#"{"temperature":20}"#
         );
 
         assert_eq!(
-            &*to_string(&Temperature { temperature: -17 }).unwrap(),
+            to_str(&mut buf, &Temperature { temperature: -17 }).unwrap(),
             r#"{"temperature":-17}"#
         );
 
         assert_eq!(
-            &*to_string(&Temperature { temperature: -128 }).unwrap(),
+            to_str(&mut buf, &Temperature { temperature: -128 }).unwrap(),
             r#"{"temperature":-128}"#
+        );
+    }
+
+    #[test]
+    fn test_ser_struct_u8() {
+        #[derive(Serialize)]
+        struct Temperature {
+            temperature: u8,
+        }
+
+        let mut buf = [0u8;18];
+
+        assert_eq!(
+            to_str(&mut buf, &Temperature { temperature: 20 }).unwrap(),
+            r#"{"temperature":20}"#
         );
     }
 
@@ -1116,13 +1206,15 @@ mod tests {
             temperature: f32,
         }
 
+        let mut buf = [0u8;30];
+
         assert_eq!(
-            &*to_string(&Temperature { temperature: -20.0 }).unwrap(),
+            to_str(&mut buf, &Temperature { temperature: -20.0 }).unwrap(),
             r#"{"temperature":-20}"#
         );
 
         assert_eq!(
-            &*to_string(&Temperature {
+            to_str(&mut buf, &Temperature {
                 temperature: -20345.
             })
             .unwrap(),
@@ -1130,7 +1222,7 @@ mod tests {
         );
 
         assert_eq!(
-            &*to_string(&Temperature {
+            to_str(&mut buf, &Temperature {
                 temperature: -2.3456789012345e-23
             })
             .unwrap(),
@@ -1138,7 +1230,7 @@ mod tests {
         );
 
         assert_eq!(
-            &*to_string(&Temperature {
+            to_str(&mut buf, &Temperature {
                 temperature: f32::NAN
             })
             .unwrap(),
@@ -1146,7 +1238,7 @@ mod tests {
         );
 
         assert_eq!(
-            &*to_string(&Temperature {
+            to_str(&mut buf, &Temperature {
                 temperature: f32::NEG_INFINITY
             })
             .unwrap(),
@@ -1158,35 +1250,34 @@ mod tests {
     fn test_ser_struct_option() {
         #[derive(Serialize)]
         struct Property<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
             description: Option<&'a str>,
+            value: Option<u32>,
         }
 
+        let mut buf = [0u8;61];
+
         assert_eq!(
-            to_string(&Property {
-                description: Some("An ambient temperature sensor"),
+            to_str(&mut buf, &Property {
+                description: Some("An ambient temperature sensor"), value: None,
             })
             .unwrap(),
-            r#"{"description":"An ambient temperature sensor"}"#
-        );
-
-        // XXX Ideally this should produce "{}"
-        assert_eq!(
-            to_string(&Property { description: None }).unwrap(),
-            r#"{"description":null}"#
-        );
-    }
-
-    #[test]
-    fn test_ser_struct_u8() {
-        #[derive(Serialize)]
-        struct Temperature {
-            temperature: u8,
-        }
+            r#"{"description":"An ambient temperature sensor","value":null}"#);
 
         assert_eq!(
-            &*to_string(&Temperature { temperature: 20 }).unwrap(),
-            r#"{"temperature":20}"#
-        );
+            to_str(&mut buf, &Property { description: None, value: None }).unwrap(),
+            r#"{"value":null}"#);
+
+        assert_eq!(
+            to_str(&mut buf, &Property { description: None, value: Some(0) }).unwrap(),
+            r#"{"value":0}"#);
+
+        assert_eq!(
+            to_str(&mut buf, &Property {
+                description: Some("Answer to the Ultimate Question?"),
+                value: Some(42)
+            }).unwrap(),
+            r#"{"description":"Answer to the Ultimate Question?","value":42}"#);
     }
 
     #[test]
@@ -1194,7 +1285,9 @@ mod tests {
         #[derive(Serialize)]
         struct Empty {}
 
-        assert_eq!(&*to_string(&Empty {}).unwrap(), r#"{}"#);
+        let mut buf = [0u8;20];
+
+        assert_eq!(to_str(&mut buf, &Empty {}).unwrap(), r#"{}"#);
 
         #[derive(Serialize)]
         struct Tuple {
@@ -1203,27 +1296,30 @@ mod tests {
         }
 
         assert_eq!(
-            &*to_string(&Tuple { a: true, b: false }).unwrap(),
-            r#"{"a":true,"b":false}"#
-        );
+            to_str(&mut buf, &Tuple { a: true, b: false }).unwrap(),
+            r#"{"a":true,"b":false}"#);
     }
 
     #[test]
     fn test_ser_unit() {
+        let mut buf = [0u8;4];
         let a = ();
-        assert_eq!(&*to_string(&a).unwrap(), r#"null"#);
+        assert_eq!(to_str(&mut buf, &a).unwrap(), r#"null"#);
         #[derive(Serialize)]
         struct Unit;
         let a = Unit;
-        assert_eq!(&*to_string(&a).unwrap(), r#"null"#);
+        assert_eq!(to_str(&mut buf, &a).unwrap(), r#"null"#);
     }
 
     #[test]
     fn test_ser_newtype_struct() {
         #[derive(Serialize)]
         struct A(pub u32);
+
+        let mut buf = [0u8;2];
+
         let a = A(54);
-        assert_eq!(&*to_string(&a).unwrap(), r#"54"#);
+        assert_eq!(to_str(&mut buf, &a).unwrap(), r#"54"#);
     }
 
     #[test]
@@ -1232,9 +1328,10 @@ mod tests {
         enum A {
             A(u32),
         }
-        let a = A::A(54);
+        let mut buf = [0u8;8];
 
-        assert_eq!(&*to_string(&a).unwrap(), r#"{"A":54}"#);
+        let a = A::A(54);
+        assert_eq!(to_str(&mut buf, &a).unwrap(), r#"{"A":54}"#);
     }
 
     #[test]
@@ -1243,12 +1340,12 @@ mod tests {
         enum A {
             A { x: u32, y: u16 },
         }
+        let mut buf = [0u8;22];
         let a = A::A { x: 54, y: 720 };
 
         assert_eq!(
-            &*to_string(&a).unwrap(),
-            r#"{"A":{"x":54,"y":720}}"#
-        );
+            to_str(&mut buf, &a).unwrap(),
+            r#"{"A":{"x":54,"y":720}}"#);
     }
 
     #[test]
@@ -1256,12 +1353,12 @@ mod tests {
         #[derive(Serialize)]
         struct A<'a>(u32, Option<&'a str>, u16, bool);
 
+        let mut buf = [0u8;25];
         let a = A(42, Some("A string"), 720, false);
 
         assert_eq!(
-            &*to_string(&a).unwrap(),
-            r#"[42,"A string",720,false]"#
-        );
+            to_str(&mut buf, &a).unwrap(),
+            r#"[42,"A string",720,false]"#);
     }
 
     #[test]
@@ -1271,8 +1368,12 @@ mod tests {
         #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
         struct A<'a>(u32, Option<&'a str>, u16, bool);
 
+        let mut buf = [0u8;25];
         let a1 = A(42, Some("A string"), 720, false);
-        let mut serialized = to_string(&a1).unwrap().into_bytes();
+
+        let mut writer = SliceWriter::new(&mut buf);
+        to_writer(&mut writer, &a1).unwrap();
+        let mut serialized = writer.split().0;
         let a2: A<'_> = crate::from_mut_slice(&mut serialized).unwrap();
         assert_eq!(a1, a2);
     }
@@ -1287,19 +1388,22 @@ mod tests {
             fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
                 where S: serde::Serializer
             {
-                let mut aux = String::new();
+                let mut buf = [0u8;20];
+                let mut aux = SliceWriter::new(&mut buf);
                 write!(aux, "{:.2}", self.0).unwrap();
-                serializer.serialize_bytes(&aux.as_bytes())
+                serializer.serialize_bytes(&aux.as_ref())
             }
         }
 
+        let mut buf = [0u8;8];
+
         let sd1 = SimpleDecimal(1.55555);
-        assert_eq!(&*to_string_pass_bytes(&sd1).unwrap(), r#"1.56"#);
+        assert_eq!(to_str_pass_bytes(&mut buf, &sd1).unwrap(), r#"1.56"#);
 
         let sd2 = SimpleDecimal(0.000);
-        assert_eq!(&*to_string_pass_bytes(&sd2).unwrap(), r#"0.00"#);
+        assert_eq!(to_str_pass_bytes(&mut buf, &sd2).unwrap(), r#"0.00"#);
 
         let sd3 = SimpleDecimal(22222.777777);
-        assert_eq!(&*to_string_pass_bytes(&sd3).unwrap(), r#"22222.78"#);
+        assert_eq!(to_str_pass_bytes(&mut buf, &sd3).unwrap(), r#"22222.78"#);
     }
 }

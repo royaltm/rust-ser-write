@@ -2,10 +2,10 @@
 
 // use std::println;
 #[cfg(feature = "std")]
-use std::{string::ToString};
+use std::{string::{String, ToString}};
 
 #[cfg(all(feature = "alloc",not(feature = "std")))]
-use alloc::{string::ToString};
+use alloc::{string::{String, ToString}};
 
 use core::convert::Infallible;
 use core::num::{NonZeroUsize, TryFromIntError};
@@ -101,7 +101,7 @@ pub enum Error {
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
     /// An error passed down from a [`serde::de::Deserialize`] implementation
-    DeserializeError(std::string::String),
+    DeserializeError(String),
     #[cfg(not(any(feature = "std", feature = "alloc")))]
     DeserializeError
 }
@@ -903,6 +903,10 @@ impl<'a, 'de> de::VariantAccess<'de> for VariantAccess<'a, 'de> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "std")]
+    use std::{vec, vec::Vec};
+    #[cfg(all(feature = "alloc",not(feature = "std")))]
+    use alloc::{vec, vec::Vec};
     use serde::Deserialize;
     use super::*;
 
@@ -953,7 +957,6 @@ mod tests {
 
         #[cfg(any(feature = "std", feature = "alloc"))]
         {
-            use std::{vec, vec::Vec};
             let mut vec = vec![0xDC, 0xFF, 0xFF];
             for _ in 0..65535 {
                 vec.push(0xC3);
@@ -1141,7 +1144,7 @@ mod tests {
         assert_eq!(from_slice::<Type>(&[0x90]), Err(Error::ExpectedIdentifier));
     }
 
-    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[cfg(feature = "std")]
     #[test]
     fn test_de_map() {
         use std::collections::HashMap;
@@ -1153,6 +1156,10 @@ mod tests {
         assert_eq!(map[&-2], "wee");
         assert_eq!(map[&420], "Waltz, bad nymph, for quick jigs vex");
 
+        let (map, len) = from_slice::<HashMap<i32,bool>>(&[0x80]).unwrap();
+        assert_eq!(len, 1);
+        assert_eq!(map.len(), 0);
+
         let (map, len) = from_slice::<HashMap<i32,bool>>(
             b"\x8F\x01\xC3\x02\xC3\x03\xC3\x04\xC3\x05\xC3\x06\xC3\x07\xC3\x08\xC3\x09\xC3\x0A\xC3\x0B\xC3\x0C\xC3\x0D\xC3\x0E\xC3\x0F\xC3").unwrap();
         assert_eq!(len, 31);
@@ -1160,6 +1167,60 @@ mod tests {
         for i in 1..=15 {
             assert_eq!(map[&i], true);
         }
+
+        let mut vec = vec![0xDE, 0xFF, 0xFF];
+        vec.reserve(65536*2);
+        for i in 1..=65535u16 {
+            if i < 128 {
+                vec.push(i as u8);
+            }
+            else if i < 256 {
+                vec.push(0xCC);
+                vec.push(i as u8);
+            }
+            else {
+                vec.push(0xCD);
+                vec.extend_from_slice(&i.to_be_bytes());
+            }
+            vec.push(0xC3);
+        }
+        let (map, len) = from_slice::<HashMap<u32,bool>>(vec.as_slice()).unwrap();
+        assert_eq!(len, vec.len());
+        assert_eq!(map.len(), 65535);
+        for i in 1..=65535 {
+            assert!(map[&i]);
+        }
+
+        let mut vec = vec![0xDF,0x00,0x01,0x00,0x00];
+        vec.reserve(65536*2);
+        for i in 1..=65536u32 {
+            if i < 128 {
+                vec.push(i as u8);
+            }
+            else if i < 256 {
+                vec.push(0xCC);
+                vec.push(i as u8);
+            }
+            else if i < 65536 {
+                vec.push(0xCD);
+                vec.extend_from_slice(&(i as u16).to_be_bytes());
+            }
+            else {
+                vec.push(0xCE);
+                vec.extend_from_slice(&i.to_be_bytes());
+            }
+            vec.push(0xC3);
+        }
+        let (map, len) = from_slice::<HashMap<u32,bool>>(vec.as_slice()).unwrap();
+        assert_eq!(len, vec.len());
+        assert_eq!(map.len(), 65536);
+        for i in 1..=65536 {
+            assert!(map[&i]);
+        }
+
+        // errors
+        assert_eq!(from_slice::<HashMap<i32,bool>>(&[0x81]),
+                   Err(Error::UnexpectedEof));
     }
 
     #[test]
@@ -1233,7 +1294,6 @@ mod tests {
             Err(Error::DeserializeError)
         );
     }
-
 
     #[test]
     fn test_de_struct_bool() {
@@ -1355,30 +1415,75 @@ mod tests {
 
     #[test]
     fn test_de_struct_option() {
-        #[derive(Debug, Deserialize, PartialEq)]
+        #[derive(Default, Debug, Deserialize, PartialEq)]
+        #[serde(default)]
         struct Property<'a> {
-            #[serde(borrow)]
             description: Option<&'a str>,
+            value: Option<u32>,
         }
-        assert_eq!(
-            from_slice(b"\x81\xABdescription\xBDAn ambient temperature sensor"),
-            Ok((Property {description: Some("An ambient temperature sensor")}, 43)));
-        assert_eq!(
-            from_slice(b"\x81\x00\xBDAn ambient temperature sensor"),
-            Ok((Property {description: Some("An ambient temperature sensor")}, 32)));
-        assert_eq!(
-            from_slice(b"\x91\xBDAn ambient temperature sensor"),
-            Ok((Property {description: Some("An ambient temperature sensor")}, 31)));
 
         assert_eq!(
+            from_slice(b"\x81\xABdescription\xBDAn ambient temperature sensor"),
+            Ok((Property {description: Some("An ambient temperature sensor"), value: None}, 43)));
+        assert_eq!(
+            from_slice(b"\x81\x00\xBDAn ambient temperature sensor"),
+            Ok((Property {description: Some("An ambient temperature sensor"), value: None}, 32)));
+        assert_eq!(
+            from_slice(b"\x91\xBDAn ambient temperature sensor"),
+            Ok((Property {description: Some("An ambient temperature sensor"), value: None}, 31)));
+
+        assert_eq!(
+            from_slice(b"\x80"),
+            Ok((Property { description: None, value: None }, 1)));
+        assert_eq!(
             from_slice(b"\x81\xABdescription\xC0"),
-            Ok((Property { description: None }, 14)));
+            Ok((Property { description: None, value: None }, 14)));
+        assert_eq!(
+            from_slice(b"\x81\xA5value\xC0"),
+            Ok((Property { description: None, value: None }, 8)));
+        assert_eq!(
+            from_slice(b"\x82\xABdescription\xC0\xA5value\xC0"),
+            Ok((Property { description: None, value: None }, 21)));
         assert_eq!(
             from_slice(b"\x81\x00\xC0"),
-            Ok((Property { description: None }, 3)));
+            Ok((Property { description: None, value: None }, 3)));
+        assert_eq!(
+            from_slice(b"\x81\x01\xC0"),
+            Ok((Property { description: None, value: None }, 3)));
+        assert_eq!(
+            from_slice(b"\x81\x01\x00"),
+            Ok((Property { description: None, value: Some(0) }, 3)));
+        assert_eq!(
+            from_slice(b"\x81\x01\x7F"),
+            Ok((Property { description: None, value: Some(127) }, 3)));
+        assert_eq!(
+            from_slice(b"\x82\x01\x7F\x00\xC0"),
+            Ok((Property { description: None, value: Some(127) }, 5)));
+
+        assert_eq!(
+            from_slice(b"\x90"),
+            Ok((Property { description: None, value: None }, 1)));
         assert_eq!(
             from_slice(b"\x91\xC0"),
-            Ok((Property { description: None }, 2)));
+            Ok((Property { description: None, value: None }, 2)));
+        assert_eq!(
+            from_slice(b"\x92\xC0\xC0"),
+            Ok((Property { description: None, value: None }, 3)));
+        assert_eq!(
+            from_slice(b"\x91\xBDAn ambient temperature sensor"),
+            Ok((Property { description: Some("An ambient temperature sensor"), value: None }, 31)));
+        assert_eq!(
+            from_slice(b"\x92\xBDAn ambient temperature sensor\xC0"),
+            Ok((Property { description: Some("An ambient temperature sensor"), value: None }, 32)));
+        assert_eq!(
+            from_slice(b"\x92\xBDAn ambient temperature sensor\x00"),
+            Ok((Property { description: Some("An ambient temperature sensor"), value: Some(0) }, 32)));
+        assert_eq!(
+            from_slice(b"\x92\xC0\x00"),
+            Ok((Property { description: None, value: Some(0) }, 3)));
+        assert_eq!(
+            from_slice::<Property>(b"\x91\x00"),
+            Err(Error::ExpectedString));
     }
 
     #[test]

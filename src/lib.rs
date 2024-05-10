@@ -117,6 +117,10 @@ impl<'a> SliceWriter<'a> {
     pub fn len(&self) -> usize {
         self.len
     }
+    // Return whether the output is not populated.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
     /// Return total capacity
     pub fn capacity(&self) -> usize {
         self.buf.len()
@@ -168,7 +172,7 @@ mod tests {
     #[test]
     fn test_slice_writer() {
         let mut buf = [0u8;22];
-        let mut writer = SliceWriter::new(&mut buf[..]);
+        let mut writer = SliceWriter::new(&mut buf);
         writer.write(b"Hello World!").unwrap();
         writer.write_byte(b' ').unwrap();
         writer.write_str("Good Bye!").unwrap();

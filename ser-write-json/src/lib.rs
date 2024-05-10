@@ -58,7 +58,7 @@ pub mod ser;
 pub mod de;
 
 pub use ser_write;
-use ser_write::{SerWrite, SerError};
+pub use ser_write::SerWrite;
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub use ser::{

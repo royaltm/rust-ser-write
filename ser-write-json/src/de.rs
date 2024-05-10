@@ -1,10 +1,10 @@
 //! JSON serde deserializer
 // use std::println;
 #[cfg(feature = "std")]
-use std::{string::ToString};
+use std::{string::String, string::ToString};
 
 #[cfg(all(feature = "alloc",not(feature = "std")))]
-use alloc::{string::ToString};
+use alloc::{string::String, string::ToString};
 
 use core::cell::Cell;
 use core::ops::Neg;
@@ -177,7 +177,7 @@ pub enum Error {
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
     /// An error passed down from a [`serde::de::Deserialize`] implementation
-    DeserializeError(std::string::String),
+    DeserializeError(String),
     #[cfg(not(any(feature = "std", feature = "alloc")))]
     DeserializeError
 }
@@ -1404,8 +1404,12 @@ impl<'a, 'de, P> de::VariantAccess<'de> for VariantAccess<'a, 'de, P>
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "std")]
     use std::{vec, vec::Vec};
+    #[cfg(all(feature = "alloc",not(feature = "std")))]
+    use alloc::{vec, vec::Vec};
     use serde::Deserialize;
+    use crate::ser_write::{SerWrite, SliceWriter};
     use super::*;
 
     #[test]
@@ -1444,28 +1448,27 @@ mod tests {
 
     #[test]
     fn test_deserializer() {
-        let mut test = Vec::new();
+        let mut test = [0;14];
         let s: &str = {
-            test.clear();
-            test.extend_from_slice(br#""Hello World!""#);
+            test.copy_from_slice(br#""Hello World!""#);
             from_mut_slice(&mut test).unwrap()
         };
         assert_eq!(s, "Hello World!");
+        let mut test = [0;21];
         let s: &str = {
-            test.clear();
-            test.extend_from_slice(br#" "Hello\tWorld!\r\n" "#);
+            test.copy_from_slice(br#" "Hello\tWorld!\r\n" "#);
             from_mut_slice(&mut test).unwrap()
         };
         assert_eq!(s, "Hello\tWorld!\r\n");
+        let mut test = [0;57];
         let tup: (i8, u32, i64, f32, f64) = {
-            test.clear();
-            test.extend_from_slice(br#" [ 0 , 4294967295, -9223372036854775808 ,3.14 , 1.2e+8 ] "#);
+            test.copy_from_slice(br#" [ 0 , 4294967295, -9223372036854775808 ,3.14 , 1.2e+8 ] "#);
             from_mut_slice(&mut test).unwrap()
         };
         assert_eq!(tup, (0i8,4294967295u32,-9223372036854775808i64,3.14f32,1.2e+8));
+        let mut test = [0;40];
         let ary: [&str;3] = {
-            test.clear();
-            test.extend_from_slice(br#" ["one\u0031", "\u0032two", "\u003333"] "#);
+            test.copy_from_slice(br#" ["one\u0031", "\u0032two", "\u003333"] "#);
             from_mut_slice(&mut test).unwrap()
         };
         assert_eq!(ary, ["one1", "2two", "333"]);
@@ -1473,61 +1476,138 @@ mod tests {
 
     #[test]
     fn test_de_bytes() {
-        use serde::Serialize;
+        let mut test = [0;2]; test.copy_from_slice(b"[]");
+        let bytes: &[u8] = from_mut_slice(&mut test).unwrap();
+        assert_eq!(bytes, b"");
 
-        let mut vec = Vec::new();
-        vec.extend_from_slice(b"[]");
-        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
-        assert_eq!(bytes, []);
+        let mut test = [0;2]; test.copy_from_slice(br#""""#);
+        let bytes: &[u8] = from_mut_slice(&mut test).unwrap();
+        assert_eq!(bytes, b"");
 
-        vec.clear(); vec.extend_from_slice(br#""""#);
-        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
-        assert_eq!(bytes, []);
-
-        vec.clear(); vec.extend_from_slice(br#""Hello!\r\n""#);
-        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        let mut test = [0;12]; test.copy_from_slice(br#""Hello!\r\n""#);
+        let bytes: &[u8] = from_mut_slice(&mut test).unwrap();
         assert_eq!(bytes, b"Hello!\r\n");
 
-        vec.clear(); vec.extend_from_slice(b"[0]");
-        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        let mut test = [0;3]; test.copy_from_slice(b"[0]");
+        let bytes: &[u8] = from_mut_slice(&mut test).unwrap();
         assert_eq!(bytes, [0]);
 
-        vec.clear(); vec.extend_from_slice(b"[0,1 , 2 ]");
-        let bytes: &[u8] = from_mut_slice(&mut vec).unwrap();
+        let mut test = [0;10]; test.copy_from_slice(b"[0,1 , 2 ]");
+        let bytes: &[u8] = from_mut_slice(&mut test).unwrap();
         assert_eq!(bytes, [0,1,2]);
 
-        vec.clear(); vec.extend_from_slice(br#""Ff00ABab""#);
-        let bytes: &[u8] = from_mut_slice_hex_bytes(&mut vec).unwrap();
+        let mut test = [0;10]; test.copy_from_slice(br#""Ff00ABab""#);
+        let bytes: &[u8] = from_mut_slice_hex_bytes(&mut test).unwrap();
         assert_eq!(bytes, [0xff,0x00,0xab,0xab]);
 
-        vec.clear(); vec.extend_from_slice(br#""/wCrqw==""#);
-        let bytes: &[u8] = from_mut_slice_base64_bytes(&mut vec).unwrap();
+        let mut test = [0;10]; test.copy_from_slice(br#""/wCrqw==""#);
+        let bytes: &[u8] = from_mut_slice_base64_bytes(&mut test).unwrap();
         assert_eq!(bytes, [0xff,0x00,0xab,0xab]);
 
-        vec.clear(); vec.extend_from_slice(br#""/wCrqw""#);
-        let bytes: &[u8] = from_mut_slice_base64_bytes(&mut vec).unwrap();
+        let mut test = [0;8]; test.copy_from_slice(br#""/wCrqw""#);
+        let bytes: &[u8] = from_mut_slice_base64_bytes(&mut test).unwrap();
         assert_eq!(bytes, [0xff,0x00,0xab,0xab]);
 
-        vec.clear(); vec.extend_from_slice(b"");
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
-        vec.clear(); vec.extend_from_slice(br#"""#);
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
-        vec.clear(); vec.extend_from_slice(br#""0""#);
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
-        vec.clear(); vec.extend_from_slice(br#""ABC""#);
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
-        vec.clear(); vec.extend_from_slice(br#""Xy""#);
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
-        vec.clear(); vec.extend_from_slice(b"[");
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
-        vec.clear(); vec.extend_from_slice(b"[-1]");
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
-        vec.clear(); vec.extend_from_slice(b"[256]");
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
-        vec.clear(); vec.extend_from_slice(b"[,]");
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
-        vec.clear(); vec.extend_from_slice(b"[0,]");
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut vec).is_err());
+        let mut test = [0;0]; test.copy_from_slice(b"");
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        let mut test = [0;1]; test.copy_from_slice(br#"""#);
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        let mut test = [0;3]; test.copy_from_slice(br#""0""#);
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        let mut test = [0;5]; test.copy_from_slice(br#""ABC""#);
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        let mut test = [0;4]; test.copy_from_slice(br#""Xy""#);
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        let mut test = [0;1]; test.copy_from_slice(b"[");
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        let mut test = [0;4]; test.copy_from_slice(b"[-1]");
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        let mut test = [0;5]; test.copy_from_slice(b"[256]");
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        let mut test = [0;3]; test.copy_from_slice(b"[,]");
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        let mut test = [0;4]; test.copy_from_slice(b"[0,]");
+        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+
+        use serde::Serialize;
+
+        #[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
+        #[serde(default)]
+        struct Test<'a> {
+            #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none")]
+            borrowed: Option<&'a[u8]>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            tail: Option<bool>,
+        }
+        let mut buf = [0u8;52];
+        let mut writer = SliceWriter::new(&mut buf);
+        let mut test = Test { borrowed: Some(&[0,10,11,12,13,14,15,16,17,18,19,255]), ..Test::default() };
+        let expected = br#"{"borrowed":[0,10,11,12,13,14,15,16,17,18,19,255]}"#;
+        crate::to_writer(&mut writer, &test).unwrap();
+        assert_eq!(&writer.as_ref(), expected);
+        assert_eq!(from_mut_slice::<Test>(writer.split().0).unwrap(), test);
+
+        let mut writer = SliceWriter::new(&mut buf);
+        writer.write(br#" { "borrowed" : [  255, 127, 128, 0  ] } "#).unwrap();
+        assert_eq!(
+            from_mut_slice::<Test>(writer.split().0).unwrap(),
+            Test { borrowed: Some(&[255,127,128,0]), ..Test::default() }
+        );
+
+        let mut writer = SliceWriter::new(&mut buf);
+        test.tail = Some(false);
+        let expected = br#"{"borrowed":"000A0B0C0D0E0F10111213FF","tail":false}"#;
+        crate::to_writer_hex_bytes(&mut writer, &test).unwrap();
+        assert_eq!(&writer.as_ref(), expected);
+        assert_eq!(from_mut_slice_hex_bytes::<Test>(writer.split().0).unwrap(), test);
+
+        let mut writer = SliceWriter::new(&mut buf);
+        writer.write(br#" { "tail" :true ,"borrowed": "DEADBACA9970" } "#).unwrap();
+        assert_eq!(
+            from_mut_slice_hex_bytes::<Test>(writer.split().0).unwrap(),
+            Test { tail: Some(true), borrowed: Some(&[0xde,0xad,0xba,0xca,0x99,0x70]), ..Test::default() }
+        );
+
+        let mut writer = SliceWriter::new(&mut buf);
+        test.tail = Some(false);
+        let expected = br#"{"borrowed":"AAoLDA0ODxAREhP/","tail":false}"#;
+        crate::to_writer_base64_bytes(&mut writer, &test).unwrap();
+        assert_eq!(&writer.as_ref(), expected);
+        assert_eq!(from_mut_slice_base64_bytes::<Test>(writer.split().0).unwrap(), test);
+
+        let mut writer = SliceWriter::new(&mut buf);
+        writer.write(br#" { "tail" :true ,"borrowed": "ABCDefgh" } "#).unwrap();
+        assert_eq!(
+            from_mut_slice_base64_bytes::<Test>(writer.split().0).unwrap(),
+            Test { tail: Some(true), borrowed: Some(&[0, 16, 131, 121, 248, 33]), ..Test::default() }
+        );
+
+        let mut writer = SliceWriter::new(&mut buf);
+        writer.write(br#" { "borrowed": [  ] , "tail" :  false}  "#).unwrap();
+        assert_eq!(
+            from_mut_slice_hex_bytes::<Test>(writer.split().0).unwrap(),
+            Test { tail: Some(false), borrowed: Some(b"") }
+        );
+
+        let mut writer = SliceWriter::new(&mut buf);
+        writer.write(br#"{"tail":null,"owned":[],"borrowed":""}"#).unwrap();
+        assert_eq!(
+            from_mut_slice_hex_bytes::<Test>(writer.split().0).unwrap(),
+            Test { borrowed: Some(b""), tail: None }
+        );
+
+        let mut writer = SliceWriter::new(&mut buf);
+        writer.write(br#" {   }  "#).unwrap();
+        assert_eq!(
+            from_mut_slice_hex_bytes::<Test>(writer.split().0).unwrap(),
+            Test::default()
+        );
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn test_de_bytes_own() {
+        use serde::Serialize;
 
         #[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
         #[serde(default)]
@@ -1540,17 +1620,17 @@ mod tests {
             tail: Option<bool>,
         }
 
-        vec.clear();
+        let mut vec = Vec::new();
         let mut test = Test { owned: Some(vec![0,10,11,12,13,14,15,16,17,18,19,255]), ..Test::default() };
         let expected = br#"{"owned":[0,10,11,12,13,14,15,16,17,18,19,255]}"#;
         crate::to_writer(&mut vec, &test).unwrap();
         assert_eq!(&vec, expected);
-        assert_eq!(from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(), test);
+        assert_eq!(from_mut_slice::<Test>(&mut vec).unwrap(), test);
 
         vec.clear();
         vec.extend_from_slice(br#" { "owned" : [  255, 127, 128, 0  ] } "#);
         assert_eq!(
-            from_mut_slice_hex_bytes::<Test>(&mut vec).unwrap(),
+            from_mut_slice::<Test>(&mut vec).unwrap(),
             Test { owned: Some(vec![255,127,128,0]), ..Test::default() }
         );
 
@@ -1651,19 +1731,18 @@ mod tests {
     fn from_str<T>(s: &str) -> Result<(T, usize)>
         where for<'a> T: de::Deserialize<'a>
     {
-        let mut vec = Vec::with_capacity(s.len());
-        vec.extend_from_slice(s.as_bytes());
-        let res: T = from_mut_slice(&mut vec)?;
-        Ok((res, s.len()))
+        let mut buf = [0u8;256];
+        from_bufstr(&mut buf, s)
     }
 
-    fn from_bufstr<'a, T>(buf: &'a mut Vec<u8>, s: &str) -> Result<(T, usize)>
+    fn from_bufstr<'a, T>(buf: &'a mut[u8], s: &str) -> Result<(T, usize)>
         where T: de::Deserialize<'a>
     {
-        buf.clear();
-        buf.extend_from_slice(s.as_bytes());
-        let res: T = from_mut_slice(buf)?;
-        Ok((res, s.len()))
+        let mut writer = SliceWriter::new(buf);
+        writer.write(s.as_bytes()).unwrap();
+        let len = writer.len();
+        let res: T = from_mut_slice(writer.split().0)?;
+        Ok((res, len))
     }
 
     #[test]
@@ -1754,7 +1833,7 @@ mod tests {
 
     #[test]
     fn test_de_str() {
-        let buf = &mut Vec::new();
+        let buf = &mut [0u8;20];
         assert_eq!(from_bufstr(buf, r#" "hello" "#), Ok(("hello", 9)));
         assert_eq!(from_bufstr(buf, r#" "" "#), Ok(("", 4)));
         assert_eq!(from_bufstr(buf, r#" " " "#), Ok((" ", 5)));
@@ -1981,7 +2060,7 @@ mod tests {
             description: Option<&'a str>,
         }
 
-        let buf = &mut Vec::new();
+        let buf = &mut [0u8;50];
 
         assert_eq!(
             from_bufstr(buf, r#"{ "description": "An ambient temperature sensor" }"#),
@@ -2147,9 +2226,9 @@ mod tests {
 
         assert_eq!(
             from_str(
-                r#"{ "source": { "station": "dock", "sensors": ["\\", "\""] }, "temperature":20}"#
+                r#"{ "source": { "station": "dock", "sensors": ["\\", "\"", "x\\\"y\\"] }, "temperature":20}"#
             ),
-            Ok((Temperature { temperature: 20 }, 77))
+            Ok((Temperature { temperature: 20 }, 89))
         );
 
         assert_eq!(
@@ -2203,7 +2282,7 @@ mod tests {
             href: &'a str,
         }
 
-        let buf = &mut Vec::new();
+        let buf = &mut [0u8;852];
 
         assert_eq!(
             from_bufstr::<Thing<'_>>(buf,

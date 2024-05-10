@@ -103,6 +103,9 @@ struct Test<'a> {
     blob: &'a[u8],
 }
 
+#[cfg(not(feature = "std"))]
+fn main() {}
+
 #[cfg(feature = "std")]
 fn main() {
     let test = Test {
