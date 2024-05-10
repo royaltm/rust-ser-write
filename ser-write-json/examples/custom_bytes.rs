@@ -12,6 +12,15 @@ use ser_write_json::{
 
 pub use ser_write_json::to_writer;
 
+macro_rules! prefix_base64 { () => {
+    "base64,"
+};}
+macro_rules! prefix_hex { () => {
+    "hex,"
+};}
+
+/* Serializer */
+
 pub fn to_writer_hex_bytes<W, T>(writer: W, value: &T) -> Result<(), Error<W::Error>>
     where W: SerWrite,
           <W as SerWrite>::Error: fmt::Display + fmt::Debug,
@@ -20,13 +29,14 @@ pub fn to_writer_hex_bytes<W, T>(writer: W, value: &T) -> Result<(), Error<W::Er
     to_writer_with_encoder::<PrefixHexByteEncoder, _, _>(writer, value)
 }
 
+/// Serialize bytes as HEX-encoded strings with a prefix
 pub struct PrefixHexByteEncoder;
 
 impl ByteEncoder for PrefixHexByteEncoder {
     fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<(), Error<W::Error>>
         where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error<W::Error>>
     {
-        ser.writer().write(br#""hex,"#)?;
+        ser.writer().write_str(concat!('"', prefix_hex!()))?;
         ser.serialize_bytes_as_hex_str(v)?;
         Ok(ser.writer().write_byte(b'"')?)
 
@@ -41,18 +51,21 @@ pub fn to_writer_base64_bytes<W, T>(writer: W, value: &T) -> Result<(), Error<W:
     to_writer_with_encoder::<PrefixBase64ByteEncoder, _, _>(writer, value)
 }
 
+/// Serialize bytes as Base64 strings with a prefix
 pub struct PrefixBase64ByteEncoder;
 
 impl ByteEncoder for PrefixBase64ByteEncoder {
     fn serialize_bytes<'a, W: SerWrite>(ser: &'a mut Serializer<W, Self>, v: &[u8]) -> Result<(), Error<W::Error>>
         where &'a mut Serializer<W, Self>: serde::ser::Serializer<Ok=(), Error=Error<W::Error>>
     {
-        ser.writer().write(br#""base64,"#)?;
+        ser.writer().write_str(concat!('"', prefix_base64!()))?;
         base64::encode(ser.writer(), v)?;
         Ok(ser.writer().write_byte(b'"')?)
 
     }
 }
+
+/* Deserializer */
 
 pub fn from_mut_slice_any_bytes<'a, T>(v: &'a mut [u8]) -> DeResult<T>
     where T: de::Deserialize<'a>
@@ -60,17 +73,20 @@ pub fn from_mut_slice_any_bytes<'a, T>(v: &'a mut [u8]) -> DeResult<T>
     from_mut_slice_with_decoder::<StringByteAnyDecoder, _>(v)
 }
 
+/// Deserialize bytes from strings depending on the prefix found in the string
 pub struct StringByteAnyDecoder;
 
 impl<'de> StringByteDecoder<'de> for StringByteAnyDecoder {
     fn decode_string_to_bytes(de: &mut Deserializer<'de, Self>) -> DeResult<&'de[u8]> {
+        const HEX: &[u8] = prefix_hex!().as_bytes();
+        const B64: &[u8] = prefix_base64!().as_bytes();
         let input = de.input_mut()?;
-        if input.starts_with(b"base64,") {
-            de.eat_some(b"base64,".len());
+        if input.starts_with(B64) {
+            de.eat_some(B64.len());
             de.parse_base64_bytes_content()
         }
-        else if input.starts_with(b"hex,") {
-            de.eat_some(b"hex,".len());
+        else if input.starts_with(HEX) {
+            de.eat_some(HEX.len());
             de.parse_hex_bytes_content()
         }
         else {

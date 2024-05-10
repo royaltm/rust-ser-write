@@ -162,6 +162,7 @@ pub fn to_string<T>(value: &T) -> Result<String, SerError>
 {
     let mut vec = Vec::new();
     to_writer(&mut vec, value)?;
+    // SAFETY: SerializerByteArray produce a valid UTF-8 output
     Ok(unsafe { String::from_utf8_unchecked(vec) })
 }
 
@@ -172,6 +173,7 @@ pub fn to_string_hex_bytes<T>(value: &T) -> Result<String, SerError>
 {
     let mut vec = Vec::new();
     to_writer_hex_bytes(&mut vec, value)?;
+    // SAFETY: SerializerByteHexStr produce a valid UTF-8 output
     Ok(unsafe { String::from_utf8_unchecked(vec) })
 }
 
@@ -182,6 +184,7 @@ pub fn to_string_base64_bytes<T>(value: &T) -> Result<String, SerError>
 {
     let mut vec = Vec::new();
     to_writer_base64_bytes(&mut vec, value)?;
+    // SAFETY: SerializerByteBase64 produce a valid UTF-8 output
     Ok(unsafe { String::from_utf8_unchecked(vec) })
 }
 

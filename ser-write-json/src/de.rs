@@ -8,6 +8,7 @@ use alloc::{string::ToString};
 
 use core::cell::Cell;
 use core::ops::Neg;
+use core::num::{ParseIntError, ParseFloatError};
 use core::slice::from_raw_parts_mut;
 use core::str::{Utf8Error, FromStr};
 use core::{fmt, str};
@@ -244,6 +245,18 @@ impl From<Utf8Error> for Error {
     }
 }
 
+impl From<ParseFloatError> for Error {
+    fn from(_err: ParseFloatError) -> Self {
+        Error::InvalidNumber
+    }
+}
+
+impl From<ParseIntError> for Error {
+    fn from(_err: ParseIntError) -> Self {
+        Error::InvalidNumber
+    }
+}
+
 /// Convert strings to byte arrays by unescaping original JSON strings
 /// without any additional decoding
 pub struct StringByteNopeDecoder;
@@ -354,6 +367,12 @@ macro_rules! impl_checked_sub {
 impl_parse_tool!(u8, u16, u32, u64, i8, i16, i32, i64);
 impl_checked_sub!(i8, i16, i32, i64);
 
+enum AnyNumber {
+    PosInt(u64),
+    NegInt(i64),
+    Float(f64)
+}
+
 /// Implementation exposes some helper functions for custom [`StringByteDecoder`] implementations.
 impl<'de, P> Deserializer<'de, P> {
     /// Provide a mutable slice, so data can be deserialized in-place
@@ -423,7 +442,8 @@ impl<'de, P> Deserializer<'de, P> {
         // so returning a reference is fine.
         unsafe {
             // we can't use slice::split_at_mut here because that would require to re-borrow
-            // self.input thus shorting the originaly referenced lifetime 'de
+            // self.input (it is a mutable reference) thus shorting the originaly referenced
+            // lifetime 'de
             self.input = from_raw_parts_mut(ptr.add(nstart), newlen);
             from_raw_parts_mut(ptr.add(index), len)
         }
@@ -542,44 +562,65 @@ impl<'de, P> Deserializer<'de, P> {
         }
     }
 
-    /// Return a position of a first non-number member character: `0..=9` and `+-.eE`
+    /// Simple heuristics to decide float or integer,
+    /// call this method ONLY after ensuring the peek character is '0'..='9'|'-'
     #[inline]
-    pub fn match_float(&mut self) -> usize {
+    fn parse_float_or_int(&mut self, peek: u8) -> Result<AnyNumber> {
+        let is_negative = peek == b'-';
+        let mut is_float = false;
+        let input = &self.input[self.index..];
+        let input = input.iter()
+        .position(|&b| match b {
+            b'0'..=b'9'|b'+'|b'-' => false,
+            b'.'|b'e'|b'E' => {
+                is_float = true;
+                false
+            }
+            _ => true
+        })
+        .map(|len| &input[..len])
+        .unwrap_or(input);
+        // SAFETY: We already checked that it only contains ASCII. This is only true if the
+        // caller has guaranteed that `pattern` contains only ASCII characters.
+        let s = unsafe { str::from_utf8_unchecked(input) };
+        let num = if is_float {
+            AnyNumber::Float(f64::from_str(s)?)
+        }
+        else if is_negative {
+            AnyNumber::NegInt(i64::from_str(s)?)
+        }
+        else {
+            AnyNumber::PosInt(u64::from_str(s)?)
+        };
+        self.eat_some(input.len());
+        Ok(num)
+    }
+
+    /// Return a slice containing only number characters: `0..=9` and `+-.eE`
+    #[inline]
+    fn match_float(&self) -> &[u8] {
         let input = &self.input[self.index..];
         input.iter()
         .position(|&b| !matches!(b, b'0'..=b'9'|b'+'|b'-'|b'.'|b'e'|b'E'))
-        .unwrap_or_else(|| input.len())
-    }
-
-    /// Consume whitespace and then subsequent number characters or a `null` token.
-    #[inline]
-    pub fn eat_number(&mut self) -> Result<()> {
-        // println!("eat num: {}", core::str::from_utf8(&self.input[self.index..]).unwrap());
-        if b'n' == self.eat_whitespace()? {
-            self.eat_some(1);
-            self.parse_token_content(b"ull")?;
-        }
-        else {
-            let pos = self.match_float();
-            self.eat_some(pos);
-        }
-        Ok(())
+        .map(|len| &input[..len])
+        .unwrap_or(input)
     }
 
     /// Consume whitespace and then parse a number as a float
     #[inline]
-    fn parse_float<F: FromStr>(&mut self) -> Result<Option<F>> {
+    fn parse_float<E, F: FromStr<Err=E>>(&mut self) -> Result<Option<F>>
+        where Error: From<E>
+    {
         if b'n' == self.eat_whitespace()? {
             self.eat_some(1);
             self.parse_token_content(b"ull")?;
             return Ok(None)
         }
-        let pos = self.match_float();
-        let input = &self.input[self.index..self.index + pos];
-        // SAFETY: We already checked that it only contains ascii. This is only true if the
-        // caller has guaranteed that `pattern` contains only ascii characters.
+        let input = self.match_float();
+        // SAFETY: We already checked that it only contains ASCII. This is only true if the
+        // caller has guaranteed that `pattern` contains only ASCII characters.
         let s = unsafe { str::from_utf8_unchecked(input) };
-        let v = F::from_str(s).map_err(|_| Error::InvalidNumber)?;
+        let v = F::from_str(s)?;
         self.eat_some(input.len());
         Ok(Some(v))
     }
@@ -840,7 +881,11 @@ impl<'de, 'a, P> de::Deserializer<'de> for &'a mut Deserializer<'de, P>
             b'n' => self.deserialize_unit(visitor),
             b't'|b'f' => self.deserialize_bool(visitor),
             b'"' => self.deserialize_str(visitor),
-            b'0'..=b'9'|b'-' => self.deserialize_f64(visitor),
+            c@(b'0'..=b'9'|b'-') => match self.parse_float_or_int(c)? {
+                AnyNumber::PosInt(n) => visitor.visit_u64(n),
+                AnyNumber::NegInt(n) => visitor.visit_i64(n),
+                AnyNumber::Float(f) => visitor.visit_f64(f),
+            }
             b'[' => self.deserialize_seq(visitor),
             b'{' => self.deserialize_map(visitor),
             _ => Err(Error::UnexpectedChar),
@@ -1139,7 +1184,8 @@ impl<'de, 'a, P> de::Deserializer<'de> for &'a mut Deserializer<'de, P>
                 visitor.visit_unit()
             }
             b'0'..=b'9'|b'-' => {
-                self.eat_number()?;
+                let len = self.match_float().len();
+                self.eat_some(len);
                 visitor.visit_unit()
             }
             b'[' => self.deserialize_seq(visitor),
@@ -2076,8 +2122,8 @@ mod tests {
         }
 
         assert_eq!(
-            from_str(r#"{ "temperature": 20, "high": 80, "low": -10, "updated": true }"#),
-            Ok((Temperature { temperature: 20 }, 62))
+            from_str(r#"{ "temperature": 20, "high": 80, "low": -10, "updated": true, "unused": null }"#),
+            Ok((Temperature { temperature: 20 }, 78))
         );
 
         assert_eq!(

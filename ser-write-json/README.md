@@ -1,9 +1,18 @@
 ser-write-json
 ==============
 
-This crate provides a `no_std` compact [JSON](https://json.org) serializer for [serde](https://crates.io/crates/serde) using `SerWrite` as a writer and a deserializer for convenience.
+This crate provides a `no_std` friendly [JSON](https://json.org) compact serializer for [serde](https://crates.io/crates/serde) using `SerWrite` as a writer and a deserializer for convenience.
 
 This crate has been in some parts derived from work of [serde-json-core](https://crates.io/crates/serde-json-core) and [serde_json](https://crates.io/crates/serde_json).
+
+
+Usage
+-----
+
+```
+[dependencies]
+ser-write-json = { version = "0.1", default-features = false }
+```
 
 
 Serializer
@@ -30,7 +39,7 @@ With any of the above features enabled additional `to_string...`  methods are pr
 Deserializer
 ------------
 
-The JSON deserializer expects a JSON encoded mutable slice of bytes. `&str` or `&[u8]` types deserialize using (ZERO-COPY) references from the provided slice. The slice needs to be mutable so the decoder can unescape JSON strings and decode bytes from strings in various formats in-place.
+The JSON deserializer expects a JSON encoded **mutable slice** of bytes. `&str` or `&[u8]` types deserialize using (ZERO-COPY) references from the provided slice. The slice needs to be mutable so the decoder can unescape JSON strings and decode bytes from strings in various formats in-place.
 
 The JSON deserializer is available in 4 flavors depending on how do you want to handle types deserialized with `deserialize_bytes` method from JSON strings:
 
