@@ -104,6 +104,7 @@ struct Test<'a> {
 }
 
 #[cfg(not(feature = "std"))]
+#[allow(dead_code)]
 fn main() {}
 
 #[cfg(feature = "std")]

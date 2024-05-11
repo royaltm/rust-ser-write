@@ -2,9 +2,11 @@ name := 'ser-write'
 
 embedded:
     cargo build -p ser-write-json-embedded-example --target thumbv7em-none-eabihf
+    cargo build -p ser-write-msgpack-embedded-example --target thumbv7em-none-eabihf
 
 example:
-    cargo run --example ser-write-json-embedded-example --release
+    cargo run --example custom_bytes --release
+    cargo run --example serde --release
 
 # build all docs
 doc:

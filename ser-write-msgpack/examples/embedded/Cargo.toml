@@ -1,0 +1,19 @@
+[package]
+name = "ser-write-msgpack-embedded-example"
+version = "0.1.0"
+authors = ["Rafał Michalski <royaltm75@gmail.com>"]
+edition = "2021"
+description = "A small example of using ser-write-msgpack with a `no_std` target"
+license = "LGPL-3.0-or-later"
+
+[[bin]]
+name="embedded"
+path="embedded.rs"
+
+[dependencies]
+serde = { version = "1", default-features = false, features=["derive"] }
+serde_bytes = { version = "0.11", default-features = false }
+ser-write-msgpack = { version = "*", path = "../..", default-features = false }
+ser-write = { version = "*", path = "../../..", default-features = false }
+cortex-m-rt = "0.7.3"
+panic-halt = "0.2.0"

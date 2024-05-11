@@ -10,7 +10,7 @@ homepage = "https://github.com/royaltm/rust-ser-write"
 repository = "https://github.com/royaltm/rust-ser-write"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-exclude = []
+exclude = ["examples"]
 
 [package.metadata.docs.rs]
 all-features = true
