@@ -573,8 +573,8 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::Serializer for &'a mut Serializer<W, 
         Ok(SeqMapSerializer { first: true, ser: self })
     }
 
-    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok, W::Error>
-        where T: fmt::Display
+    fn collect_str<T>(self, value: &T) -> Result<Self::Ok, W::Error>
+        where T: fmt::Display + ?Sized
     {
         self.output.write_byte(b'"')?;
         let mut col = StringCollector::new(&mut self.output);
@@ -764,8 +764,8 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::Serializer for KeySer<'a, W, B>
     ) -> Result<Self::SerializeStructVariant, W::Error> {
         Err(Error::InvalidKeyType)
     }
-    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok, W::Error>
-        where T: fmt::Display
+    fn collect_str<T>(self, value: &T) -> Result<Self::Ok, W::Error>
+        where T: fmt::Display + ?Sized
     {
         self.ser.collect_str(value)
     }

@@ -517,8 +517,8 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W>
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
-    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok, W::Error>
-        where T: fmt::Display
+    fn collect_str<T>(self, value: &T) -> Result<Self::Ok, W::Error>
+        where T: fmt::Display + ?Sized
     {
         self.serialize_str(&value.to_string())
     }
@@ -526,8 +526,8 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W>
     #[cfg(not(any(feature = "std", feature = "alloc")))]
     /// This implementation will format the value string twice, once to establish its size and later to actually
     /// write the string.
-    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok, W::Error>
-        where T: fmt::Display
+    fn collect_str<T>(self, value: &T) -> Result<Self::Ok, W::Error>
+        where T: fmt::Display + ?Sized
     {
         if let Some(s) = format_args!("{}", value).as_str() {
             return self.serialize_str(s)
