@@ -1,6 +1,6 @@
 [package]
 name = "ser-write"
-description = "Common traits for writer-style serializers and deserializers designed for no-std targets"
+description = "Common traits for writer-style serializers and deserializers designed for no_std targets"
 authors = ["Rafal Michalski <royaltm75@gmail.com>"]
 version = "0.1.0"
 edition = "2021"

@@ -1,10 +1,10 @@
 ser-write
 =========
 
-Writer-style serializers and deserializers for convenience designed with embedded (no-std) targets in mind.
+Writer-style serializers and deserializers for convenience designed with embedded (`no_std`) targets in mind.
 
 * Writer-style serializers use the common writer trait found in this crate.
-* Designed for `no-std`.
+* Designed for `no_std`.
 * Fully supports `std` or `alloc` when enabled for code portability and testablilty.
 * For each serializer a deserializer is provided for convenience.
 * Embedded projects can implement `SerWrite` trait for custom containers, frame builders and more.
