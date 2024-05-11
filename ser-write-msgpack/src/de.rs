@@ -1819,4 +1819,90 @@ mod tests {
             Err(Error::ReservedCode)
         );
     }
+
+    #[test]
+    fn test_de_any() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        #[serde(untagged)]
+        enum Thing<'a> {
+            Nope,
+            Bool(bool),
+            Str(&'a str),
+            Bytes(&'a[u8]),
+            Uint(u32),
+            Int(i32),
+            LongUint(u64),
+            LongInt(i64),
+            Float(f64),
+            Array([&'a str;2]),
+            Map{ a: u32, b: &'a str},
+        }
+        let input = b"\xC0";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Nope, input.len()))
+        );
+        let input = b"\xC2";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Bool(false), input.len()))
+        );
+        let input = b"\x00";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Uint(0), input.len()))
+        );
+        let input = b"\xFF";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Int(-1), input.len())));
+        let input = b"\xA3foo";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Str("foo"), input.len())));
+        let input = b"\xC4\x01\x80";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Bytes(b"\x80"), input.len())));
+        let input = b"\xCF\x00\x00\x00\x00\x00\x00\x00\x00";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Uint(0), input.len())));
+        let input = b"\xCF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::LongUint(u64::MAX), input.len())));
+        let input = b"\xD3\x00\x00\x00\x00\x00\x00\x00\x00";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Uint(0), input.len())));
+        let input = b"\xD3\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Int(-1), input.len())));
+        let input = b"\xD3\x80\x00\x00\x00\x00\x00\x00\x00";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::LongInt(i64::MIN), input.len())));
+        let input = b"\xCA\x00\x00\x00\x00";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Float(0.0), input.len())));
+        let input = b"\xCB\x00\x00\x00\x00\x00\x00\x00\x00";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Float(0.0), input.len())));
+        let input = b"\xCB\x7F\xEF\xFF\xFF\xFF\xFF\xFF\xFF";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Float(f64::MAX), input.len())));
+        let input = b"\x92\xA2xy\xA3abc";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Array(["xy","abc"]), input.len())));
+        let input = b"\x82\xA1a\x7e\xA1b\xA3zyx";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Map{a:126,b:"zyx"}, input.len())));
+    }
 }

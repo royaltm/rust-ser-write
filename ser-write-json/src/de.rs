@@ -48,7 +48,8 @@ pub fn from_mut_slice_with_decoder<'a, P, T>(v: &'a mut [u8]) -> Result<T>
 /// Deserialize an instance of type `T` from a mutable slice of bytes of JSON text.
 ///
 /// Byte arrays deserialized from a string retain the original content after
-/// unescaping all `\` tokens. The content is **not** UTF-8 validated.
+/// unescaping all `\` tokens. The content of such a byte array is **not** UTF-8
+/// validated.
 ///
 /// The provided slice must be writable so the deserializer can unescape strings 
 /// and parse bytes from arrays or strings in-place.
@@ -104,7 +105,7 @@ pub fn from_mut_slice_base64_bytes<'a, T>(v: &'a mut [u8]) -> Result<T>
 ///
 /// * deserializes data from a mutable slice,
 /// * unescapes strings in-place,
-/// * decodes strings into bytes in-place,
+/// * decodes strings or number arrays into bytes in-place,
 /// * deserializes borrowed references to `&str` and `&[u8]` types,
 /// * deserializes bytes from arrays of numbers,
 /// * deserializes bytes from strings using `P` as a string decoder,
@@ -485,7 +486,7 @@ impl<'de, P> Deserializer<'de, P> {
         Ok(number)
     }
 
-    /// Eats whitespace and then parses a number as an unsigned int
+    /// Consume whitespace and then parse a number as an unsigned integer
     #[inline]
     pub fn parse_unsigned<T: NumParseTool>(&mut self) -> Result<T> {
         let peek = self
@@ -507,7 +508,7 @@ impl<'de, P> Deserializer<'de, P> {
         }
     }
 
-    /// Eats whitespace and then parses a number as a signed int
+    /// Consume whitespace and then parse a number as a signed integer
     #[inline]
     pub fn parse_signed<T>(&mut self) -> Result<T>
         where T: NumParseTool + CheckedSub + Neg<Output = T>
@@ -543,9 +544,9 @@ impl<'de, P> Deserializer<'de, P> {
         }
     }
 
-    /// Parse a token and if match is found advances the cursor.
+    /// Parse a token and if match is found advance the cursor.
     ///
-    /// Example tokens: b"null", b"true", b"false"
+    /// Example tokens: `b"null"`, `b"true"`, `b"false"`.
     pub fn parse_token_content(&mut self, token: &[u8]) -> Result<()> {
         let size = token.len();
         if let Some(slice) = self.input.get(self.index..self.index+size) {
@@ -635,7 +636,10 @@ impl<'de, P> Deserializer<'de, P> {
         }
     }
 
-    /// Consume a content of a string ignoring all escape codes except before any '"'
+    /// Consume a content of a string until the closing `'"'`, ignoring all escape codes
+    /// except immediately before any `'"'`.
+    ///
+    /// Call after consuming the initial `'"'`.
     pub fn eat_str_content(&mut self) -> Result<()> {
         let mut start = self.index;
         loop {
@@ -667,17 +671,18 @@ impl<'de, P> Deserializer<'de, P> {
             }
         }
     }
-    /// Parse a string until a closing '"' is found, return a `str` slice.
+    /// Parse a string until a closing `'"'` is found, return a decoded `str` slice.
     ///
-    /// Handles escape sequences using in-place copy, call after eating an opening '"'
+    /// Handles escape sequences using in-place copy, call after consuming an opening `'"'`
     pub fn parse_str_content(&mut self) -> Result<&'de str> {
         core::str::from_utf8(self.parse_str_bytes_content()?)
         .map_err(From::from)
     }
 
-    /// Parse a string until a closing '"' is found.
+    /// Parse a string until a closing `'"'` is found.
+    /// Return decoded in-place string data on success.
     ///
-    /// Handles escape sequences using in-place copy, call after eating an opening '"'
+    /// Handles escape sequences using in-place copy, call after consuming an opening `'"'`
     pub fn parse_str_bytes_content(&mut self) -> Result<&'de[u8]> {
         let mut index = self.index;
         let mut dest = index;
@@ -742,9 +747,10 @@ impl<'de, P> Deserializer<'de, P> {
         }
     }
 
-    /// Parse a string as pairs of hexadecimal nibbles until a closing '"' is found.
+    /// Parse a string as pairs of hexadecimal nibbles until a closing `'"'` is found.
+    /// Return decoded in-place binary data on success.
     ///
-    /// Call after eating an opening '"'
+    /// Call after consuming an opening `'"'`.
     pub fn parse_hex_bytes_content(&mut self) -> Result<&'de[u8]> {
         let input = self.input_mut()?;
         let cells = Cell::from_mut(input).as_slice_of_cells();
@@ -778,8 +784,9 @@ impl<'de, P> Deserializer<'de, P> {
     }
 
     /// Parse a string as BASE-64 encoded bytes until a closing '"' is found.
+    /// Return decoded in-place binary data on success.
     ///
-    /// Call after eating an opening '"'
+    /// Call after consuming an opening `'"'`.
     pub fn parse_base64_bytes_content(&mut self) -> Result<&'de[u8]> {
         let input = self.input_mut()?;
         let (dlen, mut elen) = crate::base64::decode(input);
@@ -2337,5 +2344,71 @@ mod tests {
                 852
             ))
         )
+    }
+
+    #[test]
+    fn test_de_any() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        #[serde(untagged)]
+        enum Thing<'a> {
+            Nope,
+            Bool(bool),
+            Str(&'a str),
+            Uint(u32),
+            Int(i32),
+            LongUint(u64),
+            LongInt(i64),
+            Float(f64),
+            Array([&'a str;2]),
+            Map{ a: u32, b: &'a str},
+        }
+        let mut buf = [0u8;22];
+        let input = "null";
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Nope, input.len()))
+        );
+        let input = "false";
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Bool(false), input.len()))
+        );
+        let input = "0";
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Uint(0), input.len()))
+        );
+        let input = "-1";
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Int(-1), input.len())));
+        let input = r#""foo""#;
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Str("foo"), input.len())));
+        let input = "18446744073709551615";
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::LongUint(u64::MAX), input.len())));
+        let input = "-9223372036854775808";
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::LongInt(i64::MIN), input.len())));
+        let input = "0.0";
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Float(0.0), input.len())));
+        let input = "1.7976931348623157e308";
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Float(f64::MAX), input.len())));
+        let input = r#"["xy","abc"]"#;
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Array(["xy","abc"]), input.len())));
+        let input = r#"{"a":126,"b":"zyx"}"#;
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Map{a:126,b:"zyx"}, input.len())));
     }
 }

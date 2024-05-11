@@ -9,14 +9,14 @@ use alloc::{string::{String, ToString}};
 
 use serde::{ser, Serialize};
 use ser::Serializer as _;
-// use ser_write::{SerResult as Result};
+
 use super::magick::*;
 
 use ser_write::SerWrite;
 
 /// MessagePack serializer serializing structs to arrays and enum variants as indexes.
 ///
-/// Warning: with this serializer only last fields can be skipped.
+/// **Warning**: with this serializer only last fields can be skipped from a data structure.
 pub struct CompactSerializer<W> {
     output: W
 }
@@ -35,7 +35,7 @@ pub struct StructMapStrSerializer<W> {
 ///
 /// Serialize data structures as arrays without field names and enum variants as indexes.
 ///
-/// Warning: with this serializer only last fields can be skipped.
+/// **Warning**: with this function only last fields can be skipped from a data structure.
 pub fn to_writer_compact<W, T>(writer: W, value: &T) -> Result<(), W::Error>
     where W: SerWrite,
           <W as SerWrite>::Error: fmt::Display+fmt::Debug,
@@ -47,7 +47,7 @@ pub fn to_writer_compact<W, T>(writer: W, value: &T) -> Result<(), W::Error>
 
 /// Serialize `value` as a MessagePack message to a [`SerWrite`] implementation.
 ///
-/// Serialize data structures as maps with field and enum variants indexes.
+/// Serialize data structures as maps with field and enum variants as indexes.
 pub fn to_writer<W, T>(writer: W, value: &T) -> Result<(), W::Error>
     where W: SerWrite,
           <W as SerWrite>::Error: fmt::Display+fmt::Debug,

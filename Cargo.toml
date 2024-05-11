@@ -1,6 +1,6 @@
 [package]
 name = "ser-write"
-description = "Common traits for bare-metal serializers"
+description = "Common traits for writer-style serializers and deserializers designed for no-std targets"
 authors = ["Rafal Michalski <royaltm75@gmail.com>"]
 version = "0.1.0"
 edition = "2021"
@@ -10,7 +10,7 @@ homepage = "https://github.com/royaltm/rust-ser-write"
 repository = "https://github.com/royaltm/rust-ser-write"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-exclude = [".github", ".gitignore"]
+include = ["src/", "/README.md", "LICENSE-MIT","LICENSE-APACHE"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -25,7 +25,7 @@ heapless = ["dep:heapless"]
 
 [dependencies]
 arrayvec = { version = "0.7", default-features = false, optional = true }
-heapless = { version = "0.8.0", default-features = false, optional = true }
+heapless = { version = "0.8", default-features = false, optional = true }
 
 [workspace]
 resolver = "2"

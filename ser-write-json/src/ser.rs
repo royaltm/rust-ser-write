@@ -1,4 +1,4 @@
-//! JSON serde serializer for `ser-write`
+//! JSON compact serde serializer for `ser-write`
 use core::marker::PhantomData;
 use core::fmt;
 use core::mem::MaybeUninit;
@@ -14,9 +14,9 @@ use crate::SerWrite;
 
 /// JSON serializer serializing bytes to an array of numbers
 pub type SerializerByteArray<W> = Serializer<W, ArrayByteEncoder>;
-/// JSON serializer serializing bytes to a HEX string
+/// JSON serializer serializing bytes to a HEX-encoded string
 pub type SerializerByteHexStr<W> = Serializer<W, HexStrByteEncoder>;
-/// JSON serializer serializing bytes to a BASE-64 string
+/// JSON serializer serializing bytes to a Base-64 string
 pub type SerializerByteBase64<W> = Serializer<W, Base64ByteEncoder>;
 /// JSON serializer passing bytes through
 pub type SerializerBytePass<W> = Serializer<W, PassThroughByteEncoder>;
@@ -111,7 +111,7 @@ pub trait ByteEncoder: Sized {
 pub struct ArrayByteEncoder;
 /// Implements [`ByteEncoder::serialize_bytes`] serializing to a HEX string
 pub struct HexStrByteEncoder;
-/// Implements [`ByteEncoder::serialize_bytes`] serializing to a BASE-64 string
+/// Implements [`ByteEncoder::serialize_bytes`] serializing to a Base-64 string
 pub struct Base64ByteEncoder;
 /// Implements [`ByteEncoder::serialize_bytes`] passing bytes through
 pub struct PassThroughByteEncoder;
@@ -224,7 +224,7 @@ pub fn to_writer<W, T>(writer: W, value: &T) -> Result<(), W::Error>
 
 /// Serialize `value` as JSON to a [`SerWrite`] implementation.
 ///
-/// Serialize bytes as HEX strings.
+/// Serialize bytes as HEX-encoded strings.
 pub fn to_writer_hex_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
     where W: SerWrite,
           <W as SerWrite>::Error: fmt::Display + fmt::Debug,
@@ -235,7 +235,7 @@ pub fn to_writer_hex_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
 
 /// Serialize `value` as JSON to a [`SerWrite`] implementation.
 ///
-/// Serialize bytes as BASE-64 strings.
+/// Serialize bytes as Base-64 strings.
 pub fn to_writer_base64_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
     where W: SerWrite,
           <W as SerWrite>::Error: fmt::Display + fmt::Debug,
@@ -248,6 +248,8 @@ pub fn to_writer_base64_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error
 ///
 /// Serialize bytes passing them through.
 /// The notion here is that byte arrays can hold already serialized JSON fragments.
+///
+/// **NOTE**: the content of the serialized bytes may impact the validity of the produced JSON!
 pub fn to_writer_pass_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
     where W: SerWrite,
           <W as SerWrite>::Error: fmt::Display + fmt::Debug,

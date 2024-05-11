@@ -48,20 +48,20 @@ impl std::error::Error for SerError {}
 pub trait SerWrite {
     /// An error type returned from the trait methods.
     type Error;
-    /// Write all bytes from `buf` to the internal buffer.
+    /// Write **all** bytes from `buf` to the internal buffer.
     ///
-    /// When over capacity return `Err(SerError::BufferFull)`.
+    /// Otherwise return an error.
     fn write(&mut self, buf: &[u8]) -> Result<(), Self::Error>;
     /// Write a single `byte` to the internal buffer.
     ///
-    /// When over capacity return `Err(SerError::BufferFull)`.
+    /// Return an error if the operation could not succeed.
     #[inline]
     fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         self.write(core::slice::from_ref(&byte))
     }
-    /// Write a string to the internal buffer.
+    /// Write a **whole** string to the internal buffer.
     ///
-    /// When over capacity return `Err(SerError::BufferFull)`.
+    /// Otherwise return an error.
     #[inline]
     fn write_str(&mut self, s: &str) -> Result<(), Self::Error> {
         self.write(s.as_bytes())
@@ -109,7 +109,7 @@ impl<'a> AsMut<[u8]> for SliceWriter<'a> {
 }
 
 impl<'a> SliceWriter<'a> {
-    /// Create new instance
+    /// Create a new instance
     pub fn new(buf: &'a mut [u8]) -> Self {
         SliceWriter { buf, len: 0 }
     }
@@ -117,15 +117,15 @@ impl<'a> SliceWriter<'a> {
     pub fn len(&self) -> usize {
         self.len
     }
-    // Return whether the output is not populated.
+    /// Return whether the output is not populated.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
-    /// Return total capacity
+    /// Return total capacity of the container
     pub fn capacity(&self) -> usize {
         self.buf.len()
     }
-    /// Return remaining capacity
+    /// Return remaining free capacity
     pub fn rem_capacity(&self) -> usize {
         self.buf.len() - self.len
     }
@@ -136,7 +136,8 @@ impl<'a> SliceWriter<'a> {
     /// Split the underlying buffer and return the portion of the populated buffer
     /// with an underlying buffer's borrowed lifetime.
     ///
-    /// Once a [`SliceWriter`] is dropped the slice stays borrowed as long as an original container lives.
+    /// Once a [`SliceWriter`] is dropped the slice stays borrowed as long as the
+    /// original container lives.
     pub fn split(self) -> (&'a mut[u8], Self) {
         let (res, buf) = self.buf.split_at_mut(self.len);
         (res, Self { buf, len: 0 })

@@ -1,6 +1,6 @@
 [package]
 name = "ser-write-json"
-description = "JSON serializers for ser-write"
+description = "JSON serializer for ser-write and deserializer for convenience"
 authors = ["Rafal Michalski <royaltm75@gmail.com>"]
 version = "0.1.0"
 edition = "2021"
