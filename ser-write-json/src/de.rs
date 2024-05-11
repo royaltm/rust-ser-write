@@ -342,12 +342,12 @@ macro_rules! impl_parse_tool {
             #[inline(always)]
             fn checked_mul_ten(self) -> Result<Self> {
                 self.checked_mul(10)
-                .ok_or_else(|| Error::InvalidNumber)
+                .ok_or(Error::InvalidNumber)
             }
             #[inline(always)]
             fn checked_add(self, rhs: Self) -> Result<Self> {
                 self.checked_add(rhs)
-                .ok_or_else(|| Error::InvalidNumber)
+                .ok_or(Error::InvalidNumber)
             }
         }
     )*};
@@ -359,7 +359,7 @@ macro_rules! impl_checked_sub {
             #[inline(always)]
             fn checked_sub(self, rhs: Self) -> Result<Self> {
                 self.checked_sub(rhs)
-                .ok_or_else(|| Error::InvalidNumber)
+                .ok_or(Error::InvalidNumber)
             }
         }
     )*};
@@ -386,13 +386,13 @@ impl<'de, P> Deserializer<'de, P> {
         // println!("end: {}", core::str::from_utf8(&self.input[self.index..]).unwrap());
         self.eat_whitespace().err()
         .map(|_| ())
-        .ok_or_else(|| Error::TrailingCharacters)
+        .ok_or(Error::TrailingCharacters)
     }
 
     /// Peek at the next byte code, otherwise return `Err(Error::UnexpectedEof)`.
     pub fn peek(&self) -> Result<u8> {
         self.input.get(self.index).copied()
-        .ok_or_else(|| Error::UnexpectedEof)
+        .ok_or(Error::UnexpectedEof)
     }
 
     /// Advance the input cursor by `len` characters.
@@ -413,13 +413,13 @@ impl<'de, P> Deserializer<'de, P> {
             self.index = index + pos;
             self.input[index + pos]
         })
-        .ok_or_else(|| Error::UnexpectedEof)
+        .ok_or(Error::UnexpectedEof)
     }
 
     /// Return a mutable reference to the unparsed portion of the input slice on success.
     /// Otherwise return `Err(Error::UnexpectedEof)`.
     pub fn input_mut(&mut self) -> Result<&mut[u8]> {
-        self.input.get_mut(self.index..).ok_or_else(|| Error::UnexpectedEof)
+        self.input.get_mut(self.index..).ok_or(Error::UnexpectedEof)
     }
 
     /// Split the unparsed portion of the input slice between `0..len` and return it with
@@ -724,10 +724,10 @@ impl<'de, P> Deserializer<'de, P> {
                             Some(UU) => { /* u0000 */
                                 // let s = core::str::from_utf8(&self.input[index+1..index+5])?;
                                 // let code = u32::from_str_radix(s, 16)?;
-                                let code = self.input.get(index+1..index+5).ok_or_else(|| Error::UnexpectedEof)?
+                                let code = self.input.get(index+1..index+5).ok_or(Error::UnexpectedEof)?
                                            .try_into().unwrap();
-                                let code = parse_uuuu(code).ok_or_else(|| Error::InvalidEscapeSequence)?;
-                                let ch = char::from_u32(code).ok_or_else(|| Error::InvalidUnicodeCodePoint)?;
+                                let code = parse_uuuu(code).ok_or(Error::InvalidEscapeSequence)?;
+                                let ch = char::from_u32(code).ok_or(Error::InvalidUnicodeCodePoint)?;
                                 dest += ch.encode_utf8(&mut self.input[dest..]).len();
                                 index += 5;
                                 start = index;
@@ -756,7 +756,7 @@ impl<'de, P> Deserializer<'de, P> {
         let cells = Cell::from_mut(input).as_slice_of_cells();
         let mut src = cells.chunks_exact(2);
         let mut len = 0;
-        let mut iter = src.by_ref().zip(cells.into_iter());
+        let mut iter = src.by_ref().zip(cells.iter());
         while let Some(([a, b], t)) = iter.next() {
             if let Some(n) = parse_hex_nib(a.get()) {
                 if let Some(m) = parse_hex_nib(b.get()) {
@@ -772,7 +772,7 @@ impl<'de, P> Deserializer<'de, P> {
             else {
                 return Err(Error::UnexpectedChar)
             }
-            len = len + 1;
+            len += 1;
         }
         match src.remainder() {
             [] => Err(Error::UnexpectedEof),
@@ -819,8 +819,10 @@ impl<'de, P> Deserializer<'de, P> {
         let start = self.index;
         let mut index = start;
         #[allow(unused_variables)]
+        #[allow(clippy::let_unit_value)]
         let input = {
             #[cfg(debug_assertions)]
+            #[allow(clippy::unused_unit)]
             {
                 ()
             }

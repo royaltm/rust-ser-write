@@ -120,7 +120,7 @@ fn decode_cell(acc: u32, cell: &Cell<u8>) -> core::result::Result<u32, u32> {
 pub fn decode(slice: &mut[u8]) -> (usize, usize) {
     let cells = Cell::from_mut(slice).as_slice_of_cells();
     let mut chunks = cells.chunks_exact(4);
-    let mut dest = cells.into_iter();
+    let mut dest = cells.iter();
     let mut dcount: usize = 0;
     for slice in chunks.by_ref() {
         match slice.iter().try_fold(1, decode_cell) {

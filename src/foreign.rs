@@ -31,7 +31,7 @@ impl SerWrite for VecDeque<u8> {
 
     #[inline]
     fn write(&mut self, buf: &[u8]) -> SerResult<()> {
-        self.extend(buf.into_iter().copied());
+        self.extend(buf.iter().copied());
         Ok(())
     }
     #[inline]

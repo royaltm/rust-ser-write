@@ -147,7 +147,7 @@ impl<W: SerWrite> StructMapIdxSerializer<W> {
         write_u32(&mut self.output, variant_index)
     }
 
-    fn serialize_struct<'a>(&'a mut self, len: usize) -> Result<SerializeStructIntMap<'a, StructMapIdxSerializer<W>>, W::Error> {
+    fn serialize_struct(&mut self, len: usize) -> Result<SerializeStructIntMap<'_, StructMapIdxSerializer<W>>, W::Error> {
         write_map_len(&mut self.output, len)?;
         Ok(SerializeStructIntMap { ser: self, len, idx: 0 })
     }
@@ -158,7 +158,7 @@ impl<W: SerWrite> CompactSerializer<W> {
         write_u32(&mut self.output, variant_index)
     }
 
-    fn serialize_struct<'a>(&'a mut self, len: usize) -> Result<SerializeStructArray<'a, CompactSerializer<W>>, W::Error> {
+    fn serialize_struct(&mut self, len: usize) -> Result<SerializeStructArray<'_, CompactSerializer<W>>, W::Error> {
         write_array_len(&mut self.output, len)?;
         Ok(SerializeStructArray { ser: self, len })
     }
@@ -169,7 +169,7 @@ impl<W: SerWrite> StructMapStrSerializer<W> {
         write_str(&mut self.output, variant_name)
     }
 
-    fn serialize_struct<'a>(&'a mut self, len: usize) -> Result<SerializeStructStrMap<'a, StructMapStrSerializer<W>>, W::Error> {
+    fn serialize_struct(&mut self, len: usize) -> Result<SerializeStructStrMap<'_, StructMapStrSerializer<W>>, W::Error> {
         write_map_len(&mut self.output, len)?;
         Ok(SerializeStructStrMap { ser: self, len })
     }
@@ -380,7 +380,7 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W>
     }
 
     fn serialize_str(self, v: &str) -> Result<(), W::Error> {
-        Ok(write_str(&mut self.output, v)?)
+        write_str(&mut self.output, v)
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<(), W::Error> {
@@ -656,7 +656,7 @@ impl<'a, W> StringCollector<'a, W> {
 #[cfg(not(any(feature = "std", feature = "alloc")))]
 impl fmt::Write for StringLenCounter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.0 = self.0.checked_add(s.len()).ok_or_else(|| fmt::Error)?;
+        self.0 = self.0.checked_add(s.len()).ok_or(fmt::Error)?;
         Ok(())
     }
 }
@@ -664,7 +664,7 @@ impl fmt::Write for StringLenCounter {
 #[cfg(not(any(feature = "std", feature = "alloc")))]
 impl<'a, W: SerWrite> fmt::Write for StringCollector<'a, W> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.len = self.len.checked_sub(s.len()).ok_or_else(|| fmt::Error)?;
+        self.len = self.len.checked_sub(s.len()).ok_or(fmt::Error)?;
         self.output.write_str(s).map_err(|_| fmt::Error)
     }
 }

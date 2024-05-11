@@ -185,13 +185,13 @@ impl<'de> Deserializer<'de> {
     pub fn end(self) -> Result<usize> {
         self.input.len()
         .checked_sub(self.index)
-        .ok_or_else(|| Error::UnexpectedEof)
+        .ok_or(Error::UnexpectedEof)
     }
 
     /// Peek at the next byte code, otherwise return `Err(Error::UnexpectedEof)`.
     pub fn peek(&self) -> Result<u8> {
         self.input.get(self.index).copied()
-        .ok_or_else(|| Error::UnexpectedEof)
+        .ok_or(Error::UnexpectedEof)
     }
     /// Advance the input cursor by `len` characters.
     ///
@@ -203,7 +203,7 @@ impl<'de> Deserializer<'de> {
     /// Return a mutable reference to the unparsed portion of the input slice on success.
     /// Otherwise return `Err(Error::UnexpectedEof)`.
     pub fn input_ref(&mut self) -> Result<&[u8]> {
-        self.input.get(self.index..).ok_or_else(|| Error::UnexpectedEof)
+        self.input.get(self.index..).ok_or(Error::UnexpectedEof)
     }
     /// Split the unparsed portion of the input slice between `0..len` and on success
     /// return it with the lifetime of the original slice container.
@@ -215,9 +215,9 @@ impl<'de> Deserializer<'de> {
     /// __Panics__ if `cursor` + `len` overflows `usize` integer capacity.
     pub fn split_input(&mut self, len: usize) -> Result<&'de[u8]> {
         let input = self.input.get(self.index..)
-                    .ok_or_else(|| Error::UnexpectedEof)?;
+                    .ok_or(Error::UnexpectedEof)?;
         // let (res, input) = self.input.split_at_checked(len)
-        //             .ok_or_else(|| Error::UnexpectedEof)?;
+        //             .ok_or(Error::UnexpectedEof)?;
         let (res, input) = if len <= input.len() {
            input.split_at(len)
         }
@@ -239,7 +239,7 @@ impl<'de> Deserializer<'de> {
     fn fetch_array<const N: usize>(&mut self) -> Result<[u8;N]> {
         let index = self.index;
         let res = self.input.get(index..index+N)
-        .ok_or_else(|| Error::UnexpectedEof)?
+        .ok_or(Error::UnexpectedEof)?
         .try_into().unwrap();
         self.eat_some(N);
         Ok(res)
