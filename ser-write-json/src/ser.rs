@@ -27,7 +27,6 @@ pub type SerializerBytePass<W> = Serializer<W, PassThroughByteEncoder>;
 ///
 /// `ByteEncoder` determines [`ser::Serializer::serialize_bytes`] implementation.
 pub struct Serializer<W, B> {
-    first: bool,
     output: W,
     format: PhantomData<B>
 }
@@ -38,9 +37,11 @@ pub struct Serializer<W, B> {
 pub enum Error<E> {
     /// Underlying writer error
     Writer(E),
+    /// Invalid type for a JSON object key
+    InvalidKeyType,
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
-    /// Error encoding utf-8 string with pass-through bytes encoder
+    /// Error encoding UTF-8 string with pass-through bytes encoder
     Utf8Encode,
     /// Error formatting a collected a string
     FormatError,
@@ -61,13 +62,14 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Writer(err) => err.fmt(f),
+            Error::InvalidKeyType => f.write_str("invalid JSON object key data type"),
             #[cfg(any(feature = "std", feature = "alloc"))]
             Error::Utf8Encode => f.write_str("error encoding JSON as UTF-8 string"),
             Error::FormatError => f.write_str("error while collecting a string"),
             #[cfg(any(feature = "std", feature = "alloc"))]
             Error::SerializeError(s) => write!(f, "{} while serializing JSON", s),
             #[cfg(not(any(feature = "std", feature = "alloc")))]
-            Error::SerializeError => f.write_str("custom error while serializing JSON"),
+            Error::SerializeError => f.write_str("error while serializing JSON"),
         }
     }
 }
@@ -258,7 +260,7 @@ impl<W, B> Serializer<W, B> {
     /// Create a new `Serializer` with the given `output` that should implement [`SerWrite`].
     #[inline(always)]
     pub fn new(output: W) -> Self {
-        Serializer { first: false, output, format: PhantomData }
+        Serializer { output, format: PhantomData }
     }
     /// Destruct self returning the `output` object.
     #[inline(always)]
@@ -376,13 +378,13 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::Serializer for &'a mut Serializer<W, 
     type Ok = ();
     type Error = Error<W::Error>;
 
-    type SerializeSeq = Self;
-    type SerializeTuple = Self;
-    type SerializeTupleStruct = Self;
-    type SerializeTupleVariant = Self;
-    type SerializeMap = Self;
-    type SerializeStruct = Self;
-    type SerializeStructVariant = Self;
+    type SerializeSeq = SeqMapSerializer<'a, W, B>;
+    type SerializeTuple = SeqMapSerializer<'a, W, B>;
+    type SerializeTupleStruct = SeqMapSerializer<'a, W, B>;
+    type SerializeTupleVariant = SeqMapSerializer<'a, W, B>;
+    type SerializeMap = SeqMapSerializer<'a, W, B>;
+    type SerializeStruct = SeqMapSerializer<'a, W, B>;
+    type SerializeStructVariant = SeqMapSerializer<'a, W, B>;
 
     fn serialize_bool(self, v: bool) -> Result<(), W::Error> {
         Ok(self.output.write(if v { b"true" } else { b"false" })?)
@@ -512,8 +514,7 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::Serializer for &'a mut Serializer<W, 
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, W::Error> {
         self.output.write_byte(b'[')?;
-        self.first = true;
-        Ok(self)
+        Ok(SeqMapSerializer { first: true, ser: self })
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, W::Error> {
@@ -538,15 +539,13 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::Serializer for &'a mut Serializer<W, 
         self.output.write_byte(b'{')?;
         self.serialize_str(variant)?;
         self.output.write(b":[")?;
-        self.first = true;
-        Ok(self)
+        Ok(SeqMapSerializer { first: true, ser: self })
     }
 
     // Maps are represented in JSON as `{ K: V, K: V, ... }`.
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, W::Error> {
         self.output.write_byte(b'{')?;
-        self.first = true;
-        Ok(self)
+        Ok(SeqMapSerializer { first: true, ser: self })
     }
 
     fn serialize_struct(
@@ -569,8 +568,7 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::Serializer for &'a mut Serializer<W, 
         self.output.write_byte(b'{')?;
         self.serialize_str(variant)?;
         self.output.write(b":{")?;
-        self.first = true;
-        Ok(self)
+        Ok(SeqMapSerializer { first: true, ser: self })
     }
 
     fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok, W::Error>
@@ -581,6 +579,199 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::Serializer for &'a mut Serializer<W, 
         fmt::write(&mut col, format_args!("{}", value)).map_err(|_| Error::FormatError)?;
         Ok(self.output.write_byte(b'"')?)
     }
+}
+
+/// Object key serializer
+struct KeySer<'a, W,B> {
+    ser: &'a mut Serializer<W, B>
+}
+
+impl<'a, W: SerWrite, B: ByteEncoder> KeySer<'a, W, B>
+    where <W as SerWrite>::Error: fmt::Display+fmt::Debug
+{
+    #[inline(always)]
+    fn quote(self, serialize: impl FnOnce(&mut Serializer<W, B>) -> Result<(), W::Error>) -> Result<(), W::Error> {
+        self.ser.output.write_byte(b'"')?;
+        serialize(&mut *self.ser)?;
+        self.ser.output.write_byte(b'"')?;
+        Ok(())
+    }
+}
+
+impl<'a, W: SerWrite, B: ByteEncoder> ser::Serializer for KeySer<'a, W, B>
+    where <W as SerWrite>::Error: fmt::Display+fmt::Debug
+{
+    type Ok = ();
+    type Error = Error<W::Error>;
+
+    type SerializeSeq = SeqMapSerializer<'a, W, B>;
+    type SerializeTuple = SeqMapSerializer<'a, W, B>;
+    type SerializeTupleStruct = SeqMapSerializer<'a, W, B>;
+    type SerializeTupleVariant = SeqMapSerializer<'a, W, B>;
+    type SerializeMap = SeqMapSerializer<'a, W, B>;
+    type SerializeStruct = SeqMapSerializer<'a, W, B>;
+    type SerializeStructVariant = SeqMapSerializer<'a, W, B>;
+
+    fn serialize_bool(self, v: bool) -> Result<(), W::Error> {
+        self.quote(|ser| ser.serialize_bool(v))
+    }
+    #[inline(always)]
+    fn serialize_i8(self, v: i8) -> Result<(), W::Error> {
+        self.quote(|ser| ser.serialize_i8(v))
+    }
+    #[inline(always)]
+    fn serialize_i16(self, v: i16) -> Result<(), W::Error> {
+        self.quote(|ser| ser.serialize_i16(v))
+    }
+    #[inline(always)]
+    fn serialize_i32(self, v: i32) -> Result<(), W::Error> {
+        self.quote(|ser| ser.serialize_i32(v))
+    }
+    #[inline(always)]
+    fn serialize_i64(self, v: i64) -> Result<(), W::Error> {
+        self.quote(|ser| ser.serialize_i64(v))
+    }
+    #[inline(always)]
+    fn serialize_u8(self, v: u8) -> Result<(), W::Error> {
+        self.quote(|ser| ser.serialize_u8(v))
+    }
+    #[inline(always)]
+    fn serialize_u16(self, v: u16) -> Result<(), W::Error> {
+        self.quote(|ser| ser.serialize_u16(v))
+    }
+
+    fn serialize_u32(self, v: u32) -> Result<Self::Ok, W::Error> {
+        self.quote(|ser| ser.serialize_u32(v))
+    }
+
+    fn serialize_u64(self, v: u64) -> Result<Self::Ok, W::Error> {
+        self.quote(|ser| ser.serialize_u64(v))
+    }
+
+    fn serialize_f32(self, _v: f32) -> Result<(), W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+
+    fn serialize_f64(self, _v: f64) -> Result<(), W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+
+    fn serialize_char(self, v: char) -> Result<(), W::Error> {
+        self.ser.serialize_char(v)
+    }
+
+    fn serialize_str(self, v: &str) -> Result<(), W::Error> {
+        self.ser.serialize_str(v)
+    }
+
+    fn serialize_bytes(self, _v: &[u8]) -> Result<(), W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+
+    fn serialize_none(self) -> Result<(), W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+
+    fn serialize_some<T>(self, _value: &T) -> Result<(), W::Error>
+        where T: ?Sized + Serialize
+    {
+        Err(Error::InvalidKeyType)
+    }
+
+    fn serialize_unit(self) -> Result<(), W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+
+    fn serialize_unit_struct(self, _name: &'static str) -> Result<(), W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+
+    fn serialize_unit_variant(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        variant: &'static str,
+    ) -> Result<(), W::Error> {
+        self.serialize_str(variant)
+    }
+
+    fn serialize_newtype_struct<T>(
+        self,
+        _name: &'static str,
+        value: &T,
+    ) -> Result<(), W::Error>
+        where T: ?Sized + Serialize
+    {
+        value.serialize(self)
+    }
+
+    fn serialize_newtype_variant<T>(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        _variant: &'static str,
+        _value: &T,
+    ) -> Result<(), W::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        Err(Error::InvalidKeyType)
+    }
+
+    fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+
+    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+
+    fn serialize_tuple_struct(
+        self,
+        _name: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeTupleStruct, W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+
+    fn serialize_tuple_variant(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        _variant: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeTupleVariant, W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+    fn serialize_struct(
+        self,
+        _name: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeStruct, W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+    fn serialize_struct_variant(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        _variant: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeStructVariant, W::Error> {
+        Err(Error::InvalidKeyType)
+    }
+    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok, W::Error>
+        where T: fmt::Display
+    {
+        self.ser.collect_str(value)
+    }
+}
+
+pub struct SeqMapSerializer<'a, W, B> {
+    ser: &'a mut Serializer<W, B>,
+    first: bool
 }
 
 struct StringCollector<'a, W> {
@@ -602,7 +793,7 @@ impl<'a, W: SerWrite> fmt::Write for StringCollector<'a, W> {
 
 // This impl is SerializeSeq so these methods are called after `serialize_seq`
 // is called on the Serializer.
-impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeSeq for &'a mut Serializer<W, B>
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeSeq for SeqMapSerializer<'a, W, B>
     where <W as SerWrite>::Error: fmt::Display+fmt::Debug
 {
     type Ok = ();
@@ -615,18 +806,17 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeSeq for &'a mut Serializer<W
             self.first = false;
         }
         else {
-            self.output.write_byte(b',')?;
+            self.ser.output.write_byte(b',')?;
         }
-        value.serialize(&mut **self)
+        value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<(), W::Error> {
-        self.first = false;
-        Ok(self.output.write_byte(b']')?)
+        Ok(self.ser.output.write_byte(b']')?)
     }
 }
 
-impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTuple for &'a mut Serializer<W, B>
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTuple for SeqMapSerializer<'a, W, B>
     where <W as SerWrite>::Error: fmt::Display+fmt::Debug
 {
     type Ok = ();
@@ -639,18 +829,17 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTuple for &'a mut Serializer
             self.first = false;
         }
         else {
-            self.output.write_byte(b',')?;
+            self.ser.output.write_byte(b',')?;
         }
-        value.serialize(&mut **self)
+        value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<(), W::Error> {
-        self.first = false;
-        Ok(self.output.write_byte(b']')?)
+        Ok(self.ser.output.write_byte(b']')?)
     }
 }
 
-impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTupleStruct for &'a mut Serializer<W, B>
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTupleStruct for SeqMapSerializer<'a, W, B>
     where <W as SerWrite>::Error: fmt::Display+fmt::Debug
 {
     type Ok = ();
@@ -663,19 +852,18 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTupleStruct for &'a mut Seri
             self.first = false;
         }
         else {
-            self.output.write_byte(b',')?;
+            self.ser.output.write_byte(b',')?;
         }
-        value.serialize(&mut **self)
+        value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<(), W::Error> {
-        self.first = false;
-        Ok(self.output.write_byte(b']')?)
+        Ok(self.ser.output.write_byte(b']')?)
     }
 }
 
 // Tuple variants are a little different. { NAME: [ ... ]}
-impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTupleVariant for &'a mut Serializer<W, B>
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTupleVariant for SeqMapSerializer<'a, W, B>
     where <W as SerWrite>::Error: fmt::Display+fmt::Debug
 {
     type Ok = ();
@@ -688,18 +876,17 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeTupleVariant for &'a mut Ser
             self.first = false;
         }
         else {
-            self.output.write_byte(b',')?;
+            self.ser.output.write_byte(b',')?;
         }
-        value.serialize(&mut **self)
+        value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<(), W::Error> {
-        self.first = false;
-        Ok(self.output.write(b"]}")?)
+        Ok(self.ser.output.write(b"]}")?)
     }
 }
 
-impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeMap for &'a mut Serializer<W, B>
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeMap for SeqMapSerializer<'a, W, B>
     where <W as SerWrite>::Error: fmt::Display+fmt::Debug
 {
     type Ok = ();
@@ -715,25 +902,24 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeMap for &'a mut Serializer<W
             self.first = false;
         }
         else {
-            self.output.write_byte(b',')?;
+            self.ser.output.write_byte(b',')?;
         }
-        key.serialize(&mut **self)
+        key.serialize(KeySer { ser: self.ser })
     }
 
     fn serialize_value<T>(&mut self, value: &T) -> Result<(), W::Error>
     where T: ?Sized + Serialize
     {
-        self.output.write(b":")?;
-        value.serialize(&mut **self)
+        self.ser.output.write(b":")?;
+        value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<(), W::Error> {
-        self.first = false;
-        Ok(self.output.write_byte(b'}')?)
+        Ok(self.ser.output.write_byte(b'}')?)
     }
 }
 
-impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeStruct for &'a mut Serializer<W, B>
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeStruct for SeqMapSerializer<'a, W, B>
     where <W as SerWrite>::Error: fmt::Display+fmt::Debug
 {
     type Ok = ();
@@ -746,20 +932,19 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeStruct for &'a mut Serialize
             self.first = false;
         }
         else {
-            self.output.write_byte(b',')?;
+            self.ser.output.write_byte(b',')?;
         }
-        key.serialize(&mut **self)?;
-        self.output.write(b":")?;
-        value.serialize(&mut **self)
+        key.serialize(&mut *self.ser)?;
+        self.ser.output.write(b":")?;
+        value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<(), W::Error> {
-        self.first = false;
-        Ok(self.output.write_byte(b'}')?)
+        Ok(self.ser.output.write_byte(b'}')?)
     }
 }
 
-impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeStructVariant for &'a mut Serializer<W, B>
+impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeStructVariant for SeqMapSerializer<'a, W, B>
     where <W as SerWrite>::Error: fmt::Display+fmt::Debug
 {
     type Ok = ();
@@ -772,16 +957,15 @@ impl<'a, W: SerWrite, B: ByteEncoder> ser::SerializeStructVariant for &'a mut Se
             self.first = false;
         }
         else {
-            self.output.write_byte(b',')?;
+            self.ser.output.write_byte(b',')?;
         }
-        key.serialize(&mut **self)?;
-        self.output.write(b":")?;
-        value.serialize(&mut **self)
+        key.serialize(&mut *self.ser)?;
+        self.ser.output.write(b":")?;
+        value.serialize(&mut *self.ser)
     }
 
     fn end(self) -> Result<(), W::Error> {
-        self.first = false;
-        Ok(self.output.write(b"}}")?)
+        Ok(self.ser.output.write(b"}}")?)
     }
 }
 
@@ -1028,6 +1212,33 @@ mod tests {
         assert_eq!(to_str_base64_bytes(&mut buf, &value).unwrap(), expected);
         let expected = r#"[{"key":[123,34,83,116,114,117,99,116,34,58,123,34,97,34,58,49,125,125]}]"#;
         assert_eq!(to_str(&mut buf, &value).unwrap(), expected);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_json_map() {
+        use std::collections::HashMap;
+        #[derive(Debug, Serialize, PartialEq, Eq, Hash)]
+        struct Wrap(bool);
+        let mut buf = [0u8;20];
+        let mut amap = HashMap::<i32,&str>::new();
+        let expected = r#"{}"#;
+        assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
+        amap.insert(-997, "value");
+        let expected = r#"{"-997":"value"}"#;
+        assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
+        let mut amap = HashMap::<&str,i32>::new();
+        amap.insert("key", 118);
+        let expected = r#"{"key":118}"#;
+        assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
+        let mut amap = HashMap::<char,[i8;2]>::new();
+        amap.insert('ℝ', [-128,127]);
+        let expected = r#"{"ℝ":[-128,127]}"#;
+        assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
+        let mut amap = HashMap::<Wrap,bool>::new();
+        amap.insert(Wrap(true),false);
+        let expected = r#"{"true":false}"#;
+        assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
     }
 
     #[test]
