@@ -1256,25 +1256,27 @@ impl<'a, 'de, P> MapAccess<'de> for CommaSeparated<'a, 'de, P>
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>>
         where K: DeserializeSeed<'de>
     {
-        match self.de.eat_whitespace()? {
+        let peek = match self.de.eat_whitespace()? {
             b'}' => return Ok(None),
             b',' => if self.first {
                 return Err(Error::LeadingObjectComma)
             }
             else {
                 self.de.eat_some(1);
-                if b'}' == self.de.eat_whitespace()? {
-                    return Err(Error::TrailingObjectComma);
+                match self.de.eat_whitespace()? {
+                    b'}' => return Err(Error::TrailingObjectComma),
+                    ch => ch
                 }
             }
-            _ => if self.first {
+            ch => if self.first {
                 self.first = false;
+                ch
             }
             else {
                 return Err(Error::ExpectedObjectCommaOrEnd);
             }
-        }
-        if self.de.peek()? == b'"' {
+        };
+        if peek == b'"' {
             seed.deserialize(MapKey { de: &mut *self.de }).map(Some)
         }
         else {
@@ -1294,6 +1296,39 @@ struct MapKey<'a, 'de, P> {
     de: &'a mut Deserializer<'de, P>
 }
 
+impl<'de, 'a, P> MapKey<'a, 'de, P>  {
+    #[inline]
+    fn parse_unsigned_numkey<T: NumParseTool>(self) -> Result<T> {
+        self.de.eat_some(1); // eat '"', the presence of which is checked in MapAccess
+        let n = self.de.parse_unsigned()?;
+        // check if we have a closing '"' immediately following a number
+        if b'"' == self.de.peek()? {
+            self.de.eat_some(1);
+            Ok(n)
+        }
+        else {
+            Err(Error::InvalidNumber)
+        }
+    }
+
+    #[inline]
+    fn parse_signed_numkey<T>(self) -> Result<T>
+        where T: NumParseTool + CheckedSub + Neg<Output = T>
+    {
+        self.de.eat_some(1); // eat '"', the presence of which is checked in MapAccess
+        let n = self.de.parse_signed()?;
+        // check if we have a closing '"' immediately following a number
+        if b'"' == self.de.peek()? {
+            self.de.eat_some(1);
+            Ok(n)
+        }
+        else {
+            Err(Error::InvalidNumber)
+        }
+    }
+}
+
+// attempt to deserialize integers directly from string keys if that's what the type expects
 impl<'de, 'a, P> de::Deserializer<'de> for MapKey<'a, 'de, P> 
     where P: StringByteDecoder<'de>
 {
@@ -1311,8 +1346,76 @@ impl<'de, 'a, P> de::Deserializer<'de> for MapKey<'a, 'de, P>
         self.de.deserialize_str(visitor)
     }
 
+    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        self.de.deserialize_char(visitor)
+    }
+
+    fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_i8(self.parse_signed_numkey()?)
+    }
+
+    fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_i16(self.parse_signed_numkey()?)
+    }
+
+    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_i32(self.parse_signed_numkey()?)
+    }
+
+    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_i64(self.parse_signed_numkey()?)
+    }
+
+    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_u8(self.parse_unsigned_numkey()?)
+    }
+
+    fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_u16(self.parse_unsigned_numkey()?)
+    }
+
+    fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_u32(self.parse_unsigned_numkey()?)
+    }
+
+    fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_u64(self.parse_unsigned_numkey()?)
+    }
+
+    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        self.de.eat_some(1); // eat '"', the presence of which is checked in MapAccess
+        let b = self.de.deserialize_bool(visitor)?;
+        if b'"' == self.de.peek()? {
+            self.de.eat_some(1);
+            Ok(b)
+        }
+        else {
+            Err(Error::InvalidNumber)
+        }
+    }
+
     forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char string
+        i128 u128 f32 f64 string
         bytes byte_buf enum option unit unit_struct newtype_struct seq tuple
         tuple_struct map struct identifier ignored_any
     }
@@ -1414,9 +1517,13 @@ impl<'a, 'de, P> de::VariantAccess<'de> for VariantAccess<'a, 'de, P>
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "std")]
-    use std::{vec, vec::Vec};
+    use std::{format, vec, vec::Vec};
+    #[cfg(feature = "std")]
+    use std::collections::BTreeMap;
     #[cfg(all(feature = "alloc",not(feature = "std")))]
-    use alloc::{vec, vec::Vec};
+    use alloc::{format, vec, vec::Vec};
+    #[cfg(all(feature = "alloc",not(feature = "std")))]
+    use alloc::collections::BTreeMap;
     use serde::Deserialize;
     use crate::ser_write::{SerWrite, SliceWriter};
     use super::*;
@@ -1840,6 +1947,16 @@ mod tests {
         assert_eq!(from_str::<Type>(r#" [] "#), Err(Error::ExpectedEnumValue));
     }
 
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn test_de_string() {
+        let buf = &mut [0u8;9];
+        assert_eq!(from_bufstr::<String>(buf, r#""""#), Ok(("".to_string(), 2)));
+        assert_eq!(from_bufstr::<String>(buf, r#""hello""#), Ok(("hello".to_string(), 7)));
+        assert_eq!(from_bufstr::<String>(buf, r#" "" "#), Ok(("".to_string(), 4)));
+        assert_eq!(from_bufstr::<String>(buf, r#" "hello" "#), Ok(("hello".to_string(), 9)));
+    }
+
     #[test]
     fn test_de_str() {
         let buf = &mut [0u8;20];
@@ -2259,6 +2376,85 @@ mod tests {
             from_str::<Temperature>(r#"{ "temperature": 20, "broken": ] }"#),
             Err(Error::UnexpectedChar)
         );
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn test_de_map() {
+        let buf = &mut [0u8;160];
+        macro_rules! test_de_map_int {
+            ($($ty:ty),*) => {$(
+                let mut amap = BTreeMap::<$ty,&str>::new();
+                amap.insert(<$ty>::MIN, "Minimum");
+                amap.insert(1, "One");
+                amap.insert(<$ty>::MAX, "Maximum");
+                let s = format!(r#" {{ "  {}" : "Minimum" ,
+                    " {}" : "One", 
+                    "   {}" : "Maximum"
+                }} "#,
+                    <$ty>::MIN, 1, <$ty>::MAX);
+                assert_eq!(
+                    from_bufstr(buf, &s),
+                    Ok((amap.clone(), s.len())));
+                let s = format!(r#"{{"{}":"Minimum","{}":"One","{}":"Maximum"}}"#,
+                            <$ty>::MIN, 1, <$ty>::MAX);
+                assert_eq!(
+                    from_bufstr(buf, &s),
+                    Ok((amap, s.len())));
+                // errors
+                assert_eq!(
+                    from_bufstr::<BTreeMap::<$ty,&str>>(buf, r#"{ "  0 " : "" }"#),
+                    Err(Error::InvalidNumber));
+                assert_eq!(
+                    from_bufstr::<BTreeMap::<$ty,&str>>(buf, r#"{ "  0." : "" }"#),
+                    Err(Error::InvalidNumber));
+                assert_eq!(
+                    from_bufstr::<BTreeMap::<$ty,&str>>(buf, r#"{ "" : "" }"#),
+                    Err(Error::InvalidType));
+                assert_eq!(
+                    from_bufstr::<BTreeMap::<$ty,&str>>(buf, r#"{ "foo" : "" }"#),
+                    Err(Error::InvalidType));
+            )*};
+        }
+        test_de_map_int!(i8, u8, i16, u16, i32, u32, i64, u64);
+        let mut amap = BTreeMap::<&str,Option<bool>>::new();
+        amap.insert("", None);
+        amap.insert("  ", Some(false));
+        amap.insert("  1", Some(true));
+        amap.insert("\tfoo\n", Some(true));
+        assert_eq!(
+            from_bufstr(buf, r#"{"  ":false,"":null,"  1":true,"\tfoo\n":true}"#),
+            Ok((amap.clone(), 46)));
+        assert_eq!(
+            from_bufstr(buf, r#" {
+                "  " : false ,
+                "" : null,
+                "  1" :  true,
+                "\tfoo\n"  : true
+            }"#),
+            Ok((amap.clone(), 139)));
+        let mut amap = BTreeMap::<char,i32>::new();
+        amap.insert(' ', 0);
+        amap.insert('1', 1);
+        amap.insert('\t', -9);
+        amap.insert('_', -1);
+        amap.insert('ℝ', 999);
+        assert_eq!(
+            from_bufstr(buf, r#"{" ":0,"1":1,"\t":-9,"ℝ":999,"_":-1}"#),
+            Ok((amap.clone(), 38)));
+        // errors
+        assert_eq!(
+            from_bufstr::<BTreeMap::<char,i32>>(buf, r#"{"":0}"#),
+            Err(Error::InvalidLength));
+        assert_eq!(
+            from_bufstr::<BTreeMap::<char,i32>>(buf, r#"{"ab":0}"#),
+            Err(Error::InvalidLength));
+        let mut amap = BTreeMap::<bool,i8>::new();
+        amap.insert(false, 0);
+        amap.insert(true, 1);
+        assert_eq!(
+            from_bufstr(buf, r#"{"true":1,"false":0}"#),
+            Ok((amap.clone(), 20)));
     }
 
     #[test]
