@@ -98,7 +98,7 @@ impl<E> From<E> for Error<E> {
     }
 }
 
-/// Determine how arrays of bytes are serialized.
+/// Determine how raw byte data types are serialized
 pub trait ByteEncoder: Sized {
     fn serialize_bytes<'a, W: SerWrite>(
         ser: &'a mut Serializer<W, Self>,

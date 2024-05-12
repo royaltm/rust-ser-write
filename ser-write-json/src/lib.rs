@@ -25,9 +25,7 @@
 | `tuple variant`   | `{"Name": array}`
 | `struct variant`  | `{"Name": object}`
 
-[`Deserializer`] supports self-describing formats (`deserialize_any`).
-
-[`Deserializer`] deserializes structs from both JSON objects or arrays.
+* [`Serializer`] supports serializing map keys as JSON strings from integers, chars and bools.
 
 [`Deserializer`] types:
 
@@ -41,8 +39,13 @@
 | `object`          | `enum variant`,`struct variant`,`map-like`,`struct`
 | `T`               | `NewType(JSON -> T)`, `Some(JSON -> T)`
 
+* [`Deserializer`] supports self-describing formats ([`deserialize_any`]).
+* [`Deserializer`] deserializes structs from both JSON objects or arrays.
+* [`Deserializer`] deserializes maps with integer, char or bool keys from JSON object's string keys.
+
 [`Serializer`]: ser::Serializer
 [`Deserializer`]: de::Deserializer
+[`deserialize_any`]: serde::de::Deserializer::deserialize_any
 */
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
