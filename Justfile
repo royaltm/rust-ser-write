@@ -17,6 +17,10 @@ test:
     cargo test --no-default-features -- --nocapture --test-threads=1
     cargo test --no-default-features --features=alloc -- --nocapture --test-threads=1
     cargo test -- --nocapture --test-threads=1
+    cargo test -r --no-default-features -- --nocapture --test-threads=1
+    cargo test -r --no-default-features --features=alloc -- --nocapture --test-threads=1
+    cargo test -r -- --nocapture --test-threads=1
+    cargo test -p ser-write --features=arrayvec,heapless -- --nocapture --test-threads=1
 
 # run clippy tests
 clippy: clippy-json clippy-mp
