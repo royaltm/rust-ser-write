@@ -69,6 +69,13 @@ pub mod de;
 pub use ser_write;
 pub use ser_write::SerWrite;
 
+#[cfg(any(feature = "std", feature = "alloc"))]
+pub use ser::{
+    to_vec_compact,
+    to_vec,
+    to_vec_named
+};
+
 pub use ser::{
     to_writer_compact,
     to_writer,

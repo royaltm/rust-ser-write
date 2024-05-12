@@ -2,10 +2,10 @@
 use core::fmt;
 
 #[cfg(feature = "std")]
-use std::{string::{String, ToString}};
+use std::{vec::Vec, string::{String, ToString}};
 
 #[cfg(all(feature = "alloc",not(feature = "std")))]
-use alloc::{string::{String, ToString}};
+use alloc::{vec::Vec, string::{String, ToString}};
 
 use serde::{ser, Serialize};
 use ser::Serializer as _;
@@ -29,6 +29,36 @@ pub struct StructMapIdxSerializer<W> {
 /// MessagePack serializer serializing structs to maps with field names and enum variants as names
 pub struct StructMapStrSerializer<W> {
     output: W
+}
+
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+pub fn to_vec<T>(value: &T) -> Result<Vec<u8>, ser_write::SerError>
+    where T: Serialize + ?Sized
+{
+    let mut vec = Vec::new();
+    to_writer(&mut vec, value)?;
+    Ok(vec)
+}
+
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+pub fn to_vec_compact<T>(value: &T) -> Result<Vec<u8>, ser_write::SerError>
+    where T: Serialize + ?Sized
+{
+    let mut vec = Vec::new();
+    to_writer_compact(&mut vec, value)?;
+    Ok(vec)
+}
+
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
+pub fn to_vec_named<T>(value: &T) -> Result<Vec<u8>, ser_write::SerError>
+    where T: Serialize + ?Sized
+{
+    let mut vec = Vec::new();
+    to_writer_named(&mut vec, value)?;
+    Ok(vec)
 }
 
 /// Serialize `value` as a MessagePack message to a [`SerWrite`] implementation.
@@ -939,9 +969,9 @@ impl<'a, S, E> ser::SerializeStructVariant for SerializeStructStrMap<'a, S>
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "std")]
-    use std::{vec, vec::Vec};
+    use std::{vec, vec::Vec, collections::BTreeMap};
     #[cfg(all(feature = "alloc",not(feature = "std")))]
-    use alloc::{vec, vec::Vec};
+    use alloc::{vec, vec::Vec, collections::BTreeMap};
     use super::*;
     use ser_write::{SliceWriter, SerError};
 
@@ -967,33 +997,6 @@ mod tests {
         let mut writer = SliceWriter::new(buf);
         to_writer_named(&mut writer, value)?;
         Ok(writer.split().0)
-    }
-
-    #[cfg(any(feature = "std", feature = "alloc"))]
-    fn to_vec_compact<'a, T>(mut buf: &'a mut Vec<u8>, value: &T) -> Result<&'a[u8], SerError>
-        where T: Serialize + ?Sized
-    {
-        buf.clear();
-        to_writer_compact(&mut buf, value)?;
-        Ok(buf.as_slice())
-    }
-
-    #[cfg(any(feature = "std", feature = "alloc"))]
-    fn to_vec<'a, T>(mut buf: &'a mut Vec<u8>, value: &T) -> Result<&'a[u8], SerError>
-        where T: Serialize + ?Sized
-    {
-        buf.clear();
-        to_writer(&mut buf, value)?;
-        Ok(buf.as_slice())
-    }
-
-    #[cfg(any(feature = "std", feature = "alloc"))]
-    fn to_vec_named<'a, T>(mut buf: &'a mut Vec<u8>, value: &T) -> Result<&'a[u8], SerError>
-        where T: Serialize + ?Sized
-    {
-        buf.clear();
-        to_writer_named(&mut buf, value)?;
-        Ok(buf.as_slice())
     }
 
     #[test]
@@ -1172,22 +1175,21 @@ mod tests {
             #[serde(with = "serde_bytes")]
             key: Vec<u8>
         }
-        let mut buf = Vec::new();
         let vec = vec![169u8;65535];
         let value = [Test { key: vec }];
-        let res = to_vec_named(&mut buf, &value).unwrap();
+        let res = to_vec_named(&value).unwrap();
         assert_eq!(res.len(), 9+65535);
         assert!(res.starts_with(b"\x91\x81\xA3key\xC5\xff\xff"));
         for i in 0..65535 {
             assert_eq!(res[i+9], 169);
         }
-        let res = to_slice(&mut buf, &value).unwrap();
+        let res = to_vec(&value).unwrap();
         assert_eq!(res.len(), 6+65535);
         assert!(res.starts_with(b"\x91\x81\x00\xC5\xff\xff"));
         for i in 0..65535 {
             assert_eq!(res[i+6], 169);
         }
-        let res = to_slice_compact(&mut buf, &value).unwrap();
+        let res = to_vec_compact(&value).unwrap();
         assert_eq!(res.len(), 5+65535);
         assert!(res.starts_with(b"\x91\x91\xC5\xff\xff"));
         for i in 0..65535 {
@@ -1212,29 +1214,26 @@ mod tests {
             b"\x91\x91\xC4\x09\xc1\x00\x00bytes\xff");
     }
 
-    #[cfg(feature = "std")]
+    #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn test_msgpack_map() {
-        use std::collections::HashMap;
         let test_map = |amap, header: &[u8]| {
-            let mut buf = Vec::new();
-            let res = to_vec(&mut buf, &amap).unwrap();
+            let res = to_vec(&amap).unwrap();
             assert_eq!(&res[0..header.len()], header);
-            let (b, len): (HashMap::<u32,bool>, _) = crate::from_slice(res).unwrap();
+            let (b, len): (BTreeMap::<u32,bool>, _) = crate::from_slice(&res).unwrap();
             assert_eq!(len, res.len());
             assert_eq!(amap, b);
-            let mut buf = Vec::new();
-            assert_eq!(to_vec_compact(&mut buf, &amap).unwrap(), res);
-            assert_eq!(to_vec_named(&mut buf, &amap).unwrap(), res);
+            assert_eq!(to_vec_compact(&amap).unwrap(), res);
+            assert_eq!(to_vec_named(&amap).unwrap(), res);
         };
-        let mut a = HashMap::<u32,bool>::new();
+        let mut a = BTreeMap::<u32,bool>::new();
         for k in 0..65536 {
             a.insert(k, true);
         }
         let expected = &[0xDF, 0x00, 0x01, 0x00, 0x00];
         test_map(a, expected);
 
-        let mut a = HashMap::<u32,bool>::new();
+        let mut a = BTreeMap::<u32,bool>::new();
         for k in 0..256 {
             a.insert(k, true);
         }
@@ -1245,7 +1244,6 @@ mod tests {
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn test_msgpack_array() {
-        let mut buf = Vec::new();
         let mut a = Vec::<i32>::new();
         for _ in 0..65536 {
             a.push(-1i32);
@@ -1254,22 +1252,21 @@ mod tests {
         for _ in 0..65536 {
             expected.push(0xff);
         }
-        assert_eq!(to_vec(&mut buf, &a).unwrap(), expected);
-        assert_eq!(to_vec_compact(&mut buf, &a).unwrap(), expected);
-        assert_eq!(to_vec_named(&mut buf, &a).unwrap(), expected);
+        assert_eq!(to_vec(&a).unwrap(), expected);
+        assert_eq!(to_vec_compact(&a).unwrap(), expected);
+        assert_eq!(to_vec_named(&a).unwrap(), expected);
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn test_msgpack_str() {
-        let mut buf = Vec::new();
         let s = include_str!("../LICENSE-MIT");
         let mut expected = vec![0xDA];
         expected.extend_from_slice(&u16::try_from(s.len()).unwrap().to_be_bytes());
         expected.extend_from_slice(s.as_bytes());
-        assert_eq!(to_vec(&mut buf, s).unwrap(), expected);
-        assert_eq!(to_vec_compact(&mut buf, s).unwrap(), expected);
-        assert_eq!(to_vec_named(&mut buf, s).unwrap(), expected);
+        assert_eq!(to_vec(s).unwrap(), expected);
+        assert_eq!(to_vec_compact(s).unwrap(), expected);
+        assert_eq!(to_vec_named(s).unwrap(), expected);
 
         let mut s = String::new();
         for _ in 0..256u16 {
@@ -1280,9 +1277,9 @@ mod tests {
         let mut expected = vec![0xDB];
         expected.extend_from_slice(&u32::try_from(s.len()).unwrap().to_be_bytes());
         expected.extend_from_slice(s.as_bytes());
-        assert_eq!(to_vec(&mut buf, &s).unwrap(), expected);
-        assert_eq!(to_vec_compact(&mut buf, &s).unwrap(), expected);
-        assert_eq!(to_vec_named(&mut buf, &s).unwrap(), expected);
+        assert_eq!(to_vec(&s).unwrap(), expected);
+        assert_eq!(to_vec_compact(&s).unwrap(), expected);
+        assert_eq!(to_vec_named(&s).unwrap(), expected);
     }
 
     #[test]

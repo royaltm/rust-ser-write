@@ -904,9 +904,9 @@ impl<'a, 'de> de::VariantAccess<'de> for VariantAccess<'a, 'de> {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "std")]
-    use std::{vec, vec::Vec};
+    use std::{vec, vec::Vec, collections::BTreeMap};
     #[cfg(all(feature = "alloc",not(feature = "std")))]
-    use alloc::{vec, vec::Vec};
+    use alloc::{vec, vec::Vec, collections::BTreeMap};
     use serde::Deserialize;
     use super::*;
 
@@ -1144,11 +1144,10 @@ mod tests {
         assert_eq!(from_slice::<Type>(&[0x90]), Err(Error::ExpectedIdentifier));
     }
 
-    #[cfg(feature = "std")]
+    #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn test_de_map() {
-        use std::collections::HashMap;
-        let (map, len) = from_slice::<HashMap<i32,&str>>(
+        let (map, len) = from_slice::<BTreeMap<i32,&str>>(
             b"\x83\xff\xA1A\xfe\xA3wee\xD1\x01\xA4\xD9\x24Waltz, bad nymph, for quick jigs vex").unwrap();
         assert_eq!(len, 50);
         assert_eq!(map.len(), 3);
@@ -1156,11 +1155,11 @@ mod tests {
         assert_eq!(map[&-2], "wee");
         assert_eq!(map[&420], "Waltz, bad nymph, for quick jigs vex");
 
-        let (map, len) = from_slice::<HashMap<i32,bool>>(&[0x80]).unwrap();
+        let (map, len) = from_slice::<BTreeMap<i32,bool>>(&[0x80]).unwrap();
         assert_eq!(len, 1);
         assert_eq!(map.len(), 0);
 
-        let (map, len) = from_slice::<HashMap<i32,bool>>(
+        let (map, len) = from_slice::<BTreeMap<i32,bool>>(
             b"\x8F\x01\xC3\x02\xC3\x03\xC3\x04\xC3\x05\xC3\x06\xC3\x07\xC3\x08\xC3\x09\xC3\x0A\xC3\x0B\xC3\x0C\xC3\x0D\xC3\x0E\xC3\x0F\xC3").unwrap();
         assert_eq!(len, 31);
         assert_eq!(map.len(), 15);
@@ -1184,7 +1183,7 @@ mod tests {
             }
             vec.push(0xC3);
         }
-        let (map, len) = from_slice::<HashMap<u32,bool>>(vec.as_slice()).unwrap();
+        let (map, len) = from_slice::<BTreeMap<u32,bool>>(vec.as_slice()).unwrap();
         assert_eq!(len, vec.len());
         assert_eq!(map.len(), 65535);
         for i in 1..=65535 {
@@ -1211,7 +1210,7 @@ mod tests {
             }
             vec.push(0xC3);
         }
-        let (map, len) = from_slice::<HashMap<u32,bool>>(vec.as_slice()).unwrap();
+        let (map, len) = from_slice::<BTreeMap<u32,bool>>(vec.as_slice()).unwrap();
         assert_eq!(len, vec.len());
         assert_eq!(map.len(), 65536);
         for i in 1..=65536 {
@@ -1219,7 +1218,7 @@ mod tests {
         }
 
         // errors
-        assert_eq!(from_slice::<HashMap<i32,bool>>(&[0x81]),
+        assert_eq!(from_slice::<BTreeMap<i32,bool>>(&[0x81]),
                    Err(Error::UnexpectedEof));
     }
 
