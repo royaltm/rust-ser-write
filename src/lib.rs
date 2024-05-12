@@ -168,17 +168,44 @@ impl<'a> fmt::Write for SliceWriter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use core::fmt::Write;
+use super::*;
+
+    #[test]
+    fn test_ser_error() {
+        #[cfg(feature = "std")]
+        {
+            assert_eq!(std::format!("{}", SerError::BufferFull), "buffer is full");
+        }
+        let mut buf = [0u8;0];
+        let mut writer = SliceWriter::new(&mut buf);
+        assert_eq!(write!(writer, "!"), Err(fmt::Error));
+    }
 
     #[test]
     fn test_slice_writer() {
         let mut buf = [0u8;22];
         let mut writer = SliceWriter::new(&mut buf);
+        assert_eq!(writer.capacity(), 22);
+        assert_eq!(writer.rem_capacity(), 22);
+        assert_eq!(writer.len(), 0);
+        assert_eq!(writer.is_empty(), true);
         writer.write(b"Hello World!").unwrap();
+        assert_eq!(writer.rem_capacity(), 10);
+        assert_eq!(writer.len(), 12);
+        assert_eq!(writer.is_empty(), false);
         writer.write_byte(b' ').unwrap();
-        writer.write_str("Good Bye!").unwrap();
+        assert_eq!(writer.rem_capacity(), 9);
+        assert_eq!(writer.len(), 13);
+        assert_eq!(writer.is_empty(), false);
+        SerWrite::write_str(&mut writer, "Good Bye!").unwrap();
         let expected = b"Hello World! Good Bye!";
         assert_eq!(writer.as_ref(), expected);
+        assert_eq!(writer.as_mut(), expected);
+        assert_eq!(writer.capacity(), 22);
+        assert_eq!(writer.rem_capacity(), 0);
+        assert_eq!(writer.is_empty(), false);
+        assert_eq!(writer.len(), 22);
         let (head, mut writer) = writer.split();
         assert_eq!(head, expected);
         assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);

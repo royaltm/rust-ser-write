@@ -119,6 +119,7 @@ mod tests {
         let expected = b"Hello World! Good Bye!";
         assert_eq!(writer.get_ref(), expected);
         assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
+        assert_eq!(writer.write(b" ").unwrap_err(), SerError::BufferFull);
     }
 
     #[cfg(feature = "arrayvec")]
@@ -131,6 +132,7 @@ mod tests {
         let expected = b"Hello World! Good Bye!";
         assert_eq!(writer.as_slice(), expected);
         assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
+        assert_eq!(writer.write(b" ").unwrap_err(), SerError::BufferFull);
     }
 
     #[cfg(feature = "heapless")]
@@ -143,5 +145,6 @@ mod tests {
         let expected = b"Hello World! Good Bye!";
         assert_eq!(writer.as_slice(), expected);
         assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
+        assert_eq!(writer.write(b" ").unwrap_err(), SerError::BufferFull);
     }
 }
