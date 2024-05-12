@@ -67,6 +67,7 @@ pub mod ser;
 pub mod de;
 
 pub use ser_write;
+pub use ser_write::SerWrite;
 
 pub use ser::{
     to_writer_compact,
@@ -84,7 +85,7 @@ mod magick {
     /* MessagePack MAGICK */
     pub const MIN_POSFIXINT: u8 = 0x00;
     pub const MAX_POSFIXINT: u8 = 0x7f;
-    pub const NEGFIXINT: u8 = 0b11100000u8;
+    pub const NEGFIXINT: u8 = 0b11100000;
     pub const MIN_NEGFIXINT: i8 = NEGFIXINT as i8; //-32
     pub const FIXINT_I16: RangeInclusive<i16> = MIN_NEGFIXINT as i16..=MAX_POSFIXINT as i16;
     pub const FIXINT_I32: RangeInclusive<i32> = MIN_NEGFIXINT as i32..=MAX_POSFIXINT as i32;
