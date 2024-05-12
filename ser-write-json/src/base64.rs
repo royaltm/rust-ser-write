@@ -4,9 +4,9 @@ use crate::SerWrite;
 
 static ALPHABET: &[u8;64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/// Encode an array of bytes as BASE-64 ASCII armour codes into a [`SerWrite`] implementing object.
+/// Encode an array of bytes as Base-64 ASCII armour codes into a [`SerWrite`] implementing object.
 ///
-/// This function does not append BASE-64 `'='` padding characters by itself
+/// This function does not append Base-64 `'='` padding characters by itself
 /// and instead returns the number of padding characters required: 0-2.
 pub fn encode<W: SerWrite>(ser: &mut W, bytes: &[u8]) -> Result<u8, W::Error> {
     let mut chunks = bytes.chunks_exact(3);
@@ -54,40 +54,26 @@ fn get_code(c: u8) -> Option<u8> {
     }
 }
 
+// static DIGITS: [u8;80] = [
+// /*   0   1   2   3   4   5   6   7   8   9   A   B   C   D   E   F */
+//                                                 62, 80, 80, 80, 63, /* 0x2B..=0x2F */
+//     52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 80, 80, 80, 64, 80, 80, /* 0x30..=0x3F */
+//     80,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, /* 0x40..=0x4F */
+//     15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 80, 80, 80, 80, 80, /* 0x50..=0x5F */
+//     80, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, /* 0x60..=0x6F */
+//     41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51                      /* 0x70..=0x7A */
+// ];
+
+// #[inline]
 // fn get_code(c: u8) -> Option<u8> {
-//     match c & 0b11110000 {
-//         b'@' if c >= b'A' => {
-//             Some(c - b'A')
+//     match c {
+//         0x2B..=0x7A => {
+//             let n = DIGITS[(c - 0x2B) as usize];
+//             (n <= 63).then_some(n)
 //         }
-//         b'P' if c <= b'Z' => {
-//             Some(c - b'A')
-//         }
-//         b'`' if c >= b'a' => {
-//             Some(c - (b'a' - 26))
-//         }
-//         b'p' if c <= b'Z' => {
-//             Some(c - b'A')
-//         }
-//         b'0' if c <= b'9' => {
-//             Some(c + (52 - b'0'))
-//         }
-//         b' ' => match c {
-//             b'/' => Some(63),
-//             b'+' => Some(62),
-//             _ => None
-//         }
-//         _ => None // non-ASCII or control
+//         _ => None
 //     }
 // }
-
-// static DIGITS: &[u8;96] = [
-//     80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 62, 80, 80, 80, 63, /* 32 - 47 */
-//     52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 80, 80, 80, 64, 80, 80, /* 48 - 63 */
-//     80,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, /* 64 - 79 */
-//     15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 80, 80, 80, 80, 80, /* 80 - 95 */
-//     80, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, /* 96 - 111 */
-//     41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 80, 80, 80, 80, 80 /* 112 - 127 */
-// ];
 
 //   010100    110111    010101    101110
 //                       010100 << 18
@@ -111,7 +97,7 @@ fn decode_cell(acc: u32, cell: &Cell<u8>) -> core::result::Result<u32, u32> {
         None => Err(acc)
     }
 }
-/// Decode a BASE-64 encoded slice of byte characters in-place until a first
+/// Decode a Base-64 encoded slice of byte characters in-place until a first
 /// invalid character is found or until the end of the slice.
 ///
 /// Return a tuple of: `(decoded_len, encoded_len)`.
@@ -165,7 +151,7 @@ fn handle_tail<'a, I>(mut dcount: usize, mut packed: u32, mut dest: I) -> (usize
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ser_write::SliceWriter;
+    use crate::ser_write::{SerError, SliceWriter};
 
     #[test]
     fn test_base64_encode() {
@@ -212,8 +198,18 @@ mod tests {
         encode(writer, &[0xFF,0xFF]).unwrap();
         assert_eq!(writer.as_ref(), b"//8");
         writer.clear();
+        encode(writer, &[0xFF,0xFF,0xFE]).unwrap();
+        assert_eq!(writer.as_ref(), b"///+");
+        writer.clear();
         encode(writer, &[0xFF,0xFF,0xFF]).unwrap();
         assert_eq!(writer.as_ref(), b"////");
+        assert_eq!(encode(writer, b"12345"), Err(SerError::BufferFull));
+        let mut buf = [0u8;1];
+        let writer = &mut SliceWriter::new(&mut buf);
+        assert_eq!(encode(writer, b"1"), Err(SerError::BufferFull));
+        let mut buf = [0u8;1];
+        let writer = &mut SliceWriter::new(&mut buf);
+        assert_eq!(encode(writer, b"12"), Err(SerError::BufferFull));
     }
 
     fn test_decode(buf: &mut[u8], encoded: &[u8], expected: (usize, usize), decoded: &[u8]) {
@@ -260,5 +256,11 @@ mod tests {
         test_decode(buf, br"/////w", (4,6), &[0xFF,0xFF,0xFF,0xFF]);
         test_decode(buf, br"//////8", (5,7), &[0xFF,0xFF,0xFF,0xFF,0xFF]);
         test_decode(buf, br"////////", (6,8), &[0xFF,0xFF,0xFF,0xFF,0xFF,0xFF]);
-   }
+        test_decode(buf, br"/v", (1,2), &[0xFE]);
+        test_decode(buf, br"//7", (2,3), &[0xFF,0xFE]);
+        test_decode(buf, br"///+", (3,4), &[0xFF,0xFF,0xFE]);
+        test_decode(buf, br"/////v", (4,6), &[0xFF,0xFF,0xFF,0xFE]);
+        test_decode(buf, br"///+//7", (5,7), &[0xFF,0xFF,0xFE,0xFF,0xFE]);
+        test_decode(buf, br"///+///+", (6,8), &[0xFF,0xFF,0xFE,0xFF,0xFF,0xFE]);
+  }
 }
