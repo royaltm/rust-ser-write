@@ -1,7 +1,7 @@
 ser-write-json
 ==============
 
-This crate provides a `no_std` friendly [JSON](https://json.org) compact serializer for [serde](https://crates.io/crates/serde) using `SerWrite` as a writer and a deserializer for convenience.
+This crate provides a `no_std` friendly [JSON](https://json.org) compact serializer for [serde](https://crates.io/crates/serde) using [`SerWrite`] as a writer and a deserializer for convenience.
 
 This crate has been in some parts derived from work of [serde-json-core](https://crates.io/crates/serde-json-core) and [serde_json](https://crates.io/crates/serde_json).
 
@@ -26,7 +26,7 @@ The crate provides JSON serializers in 4 flavors depending on how do you want to
 * `to_writer_pass_bytes` - passing through bytes to a writer assuming they contain pre-serialized JSON fragments.
 * `to_writer_with_encoder` - a custom encoder can be provided.
 
-Custom string encoders can be implemented using `ByteEncoder` trait. There's an [example][examples/] in this repository that does exactly that.
+Custom string encoders can be implemented using `ByteEncoder` trait. There's an [example](examples/) in this repository that does exactly that.
 
 Features:
 
@@ -53,3 +53,5 @@ Deserializer can also deserialize bytes in-place from a JSON array of numbers re
 Deserializer supports self-describing formats.
 
 Deserializer deserializes structs from both JSON objects and arrays.
+
+[`SerWrite`]: https://docs.rs/ser-write/latest/ser_write/trait.SerWrite.html
