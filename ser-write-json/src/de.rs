@@ -1517,13 +1517,9 @@ impl<'a, 'de, P> de::VariantAccess<'de> for VariantAccess<'a, 'de, P>
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "std")]
-    use std::{format, vec, vec::Vec};
-    #[cfg(feature = "std")]
-    use std::collections::BTreeMap;
+    use std::{format, vec, vec::Vec, collections::BTreeMap};
     #[cfg(all(feature = "alloc",not(feature = "std")))]
-    use alloc::{format, vec, vec::Vec};
-    #[cfg(all(feature = "alloc",not(feature = "std")))]
-    use alloc::collections::BTreeMap;
+    use alloc::{format, vec, vec::Vec, collections::BTreeMap};
     use serde::Deserialize;
     use crate::ser_write::{SerWrite, SliceWriter};
     use super::*;

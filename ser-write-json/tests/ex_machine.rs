@@ -5,9 +5,16 @@ use core::fmt::{self, Display, Formatter};
 use serde::{Serialize, Deserialize};
 use serde_json::json;
 
+#[cfg(all(feature = "alloc",not(feature = "std")))]
+extern crate alloc;
+#[cfg(feature = "std")]
+use std::collections::BTreeMap;
+#[cfg(all(feature = "alloc",not(feature = "std")))]
+use alloc::collections::BTreeMap;
+
 use ser_write_json::{to_string, from_mut_slice};
 
-type Vars<'a> = std::collections::HashMap<&'a str, f64>;
+type Vars<'a> = BTreeMap<&'a str, f64>;
 
 /// A machine
 #[derive(Debug, Serialize, Deserialize, PartialEq)]

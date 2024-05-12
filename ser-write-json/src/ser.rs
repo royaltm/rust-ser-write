@@ -1030,14 +1030,10 @@ static ESCAPE: [u8; 32] = [
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "std")]
-    use std::{vec, format};
-    #[cfg(feature = "std")]
-    use std::collections::BTreeMap;
+    use std::{vec, format, collections::BTreeMap};
 
     #[cfg(all(feature = "alloc",not(feature = "std")))]
-    use alloc::{vec, format};
-    #[cfg(all(feature = "alloc",not(feature = "std")))]
-    use alloc::collections::BTreeMap;
+    use alloc::{vec, format, collections::BTreeMap};
 
     use super::*;
     use crate::ser_write::{SliceWriter, SerError};
