@@ -26,6 +26,7 @@ test:
 clippy: clippy-json clippy-mp
     touch src/lib.rs
     cargo clippy -- -D warnings
+    cargo clippy --all-features -- -D warnings
     cargo clippy --no-default-features -- -D warnings
 
 # run clippy tests ser-write-json
@@ -39,6 +40,13 @@ clippy-mp:
     touch ser-write-msgpack/src/lib.rs
     cargo clippy -p ser-write-msgpack -- -D warnings
     cargo clippy -p ser-write-msgpack --no-default-features --features=alloc -- -D warnings
+
+cov:
+    cargo llvm-cov clean --workspace
+    cargo llvm-cov --no-report --no-default-features
+    cargo llvm-cov --no-report --no-default-features --features=alloc
+    cargo llvm-cov --no-report --all-features
+    cargo llvm-cov report --html --open
 
 clean:
     cargo clean
