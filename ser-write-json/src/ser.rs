@@ -1030,9 +1030,14 @@ static ESCAPE: [u8; 32] = [
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "std")]
-    use std::vec;
+    use std::{vec, format};
+    #[cfg(feature = "std")]
+    use std::collections::BTreeMap;
+
     #[cfg(all(feature = "alloc",not(feature = "std")))]
-    use alloc::vec;
+    use alloc::{vec, format};
+    #[cfg(all(feature = "alloc",not(feature = "std")))]
+    use alloc::collections::BTreeMap;
 
     use super::*;
     use crate::ser_write::{SliceWriter, SerError};
@@ -1216,28 +1221,45 @@ mod tests {
         assert_eq!(to_str(&mut buf, &value).unwrap(), expected);
     }
 
-    #[cfg(feature = "std")]
+    #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn test_json_map() {
-        use std::collections::HashMap;
-        #[derive(Debug, Serialize, PartialEq, Eq, Hash)]
+        #[derive(Debug, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
         struct Wrap(bool);
-        let mut buf = [0u8;20];
-        let mut amap = HashMap::<i32,&str>::new();
-        let expected = r#"{}"#;
-        assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
-        amap.insert(-997, "value");
-        let expected = r#"{"-997":"value"}"#;
-        assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
-        let mut amap = HashMap::<&str,i32>::new();
+        let mut buf = [0u8;68];
+        macro_rules! test_map_with_key_int {
+            ($($ty:ty),*) => {$(
+                let mut amap = BTreeMap::<$ty,&str>::new();
+                let expected = r#"{}"#;
+                assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
+                amap.insert(1, "one");
+                let expected = r#"{"1":"one"}"#;
+                assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
+                amap.insert(<$ty>::MIN, "min");
+                let expected = format!(r#"{{"{}":"min","1":"one"}}"#, <$ty>::MIN);
+                assert_eq!(to_str(&mut buf, &amap).unwrap(), &expected);
+                amap.insert(<$ty>::MAX, "max");
+                let expected = format!(r#"{{"{}":"min","1":"one","{}":"max"}}"#, <$ty>::MIN, <$ty>::MAX);
+                assert_eq!(to_str(&mut buf, &amap).unwrap(), &expected);
+            )*};
+        }
+        test_map_with_key_int!(i8, u8, i16, u16, i32, u32, i64, u64);
+        let mut amap = BTreeMap::<&str,i32>::new();
         amap.insert("key", 118);
         let expected = r#"{"key":118}"#;
         assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
-        let mut amap = HashMap::<char,[i8;2]>::new();
+        let mut amap = BTreeMap::<char,[i8;2]>::new();
         amap.insert('ℝ', [-128,127]);
         let expected = r#"{"ℝ":[-128,127]}"#;
         assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
-        let mut amap = HashMap::<Wrap,bool>::new();
+        let mut amap = BTreeMap::<bool,&str>::new();
+        amap.insert(false,"");
+        let expected = r#"{"false":""}"#;
+        assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
+        amap.insert(true,"1");
+        let expected = r#"{"false":"","true":"1"}"#;
+        assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
+        let mut amap = BTreeMap::<Wrap,bool>::new();
         amap.insert(Wrap(true),false);
         let expected = r#"{"true":false}"#;
         assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
