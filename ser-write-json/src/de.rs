@@ -1410,13 +1410,24 @@ impl<'de, 'a, P> de::Deserializer<'de> for MapKey<'a, 'de, P>
             Ok(b)
         }
         else {
-            Err(Error::InvalidNumber)
+            Err(Error::InvalidType)
         }
+    }
+
+    fn deserialize_enum<V>(
+        self,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value>
+        where V: Visitor<'de>
+    {
+        visitor.visit_enum(UnitVariantAccess { de: self.de })
     }
 
     forward_to_deserialize_any! {
         i128 u128 f32 f64 string
-        bytes byte_buf enum option unit unit_struct newtype_struct seq tuple
+        bytes byte_buf option unit unit_struct newtype_struct seq tuple
         tuple_struct map struct identifier ignored_any
     }
 }
@@ -2438,19 +2449,35 @@ mod tests {
         assert_eq!(
             from_bufstr(buf, r#"{" ":0,"1":1,"\t":-9,"ℝ":999,"_":-1}"#),
             Ok((amap.clone(), 38)));
-        // errors
+        #[derive(Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
+        enum CKey {
+            Foo, Bar
+        }
+        let mut amap = BTreeMap::<CKey,i8>::new();
+        amap.insert(CKey::Foo, 0);
+        amap.insert(CKey::Bar, 1);
         assert_eq!(
-            from_bufstr::<BTreeMap::<char,i32>>(buf, r#"{"":0}"#),
-            Err(Error::InvalidLength));
-        assert_eq!(
-            from_bufstr::<BTreeMap::<char,i32>>(buf, r#"{"ab":0}"#),
-            Err(Error::InvalidLength));
+            from_bufstr(buf, r#"{"Foo":0,"Bar":1}"#),
+            Ok((amap, 17)));
         let mut amap = BTreeMap::<bool,i8>::new();
         amap.insert(false, 0);
         amap.insert(true, 1);
         assert_eq!(
             from_bufstr(buf, r#"{"true":1,"false":0}"#),
             Ok((amap.clone(), 20)));
+        // errors
+        assert_eq!(
+            from_bufstr::<BTreeMap::<CKey,i8>>(buf, r#"{"Baz":0}"#),
+            Err(Error::DeserializeError("unknown variant `Baz`, expected `Foo` or `Bar`".to_string())));
+        assert_eq!(
+            from_bufstr::<BTreeMap::<char,i32>>(buf, r#"{"":0}"#),
+            Err(Error::InvalidLength));
+        assert_eq!(
+            from_bufstr::<BTreeMap::<char,i32>>(buf, r#"{"ab":0}"#),
+            Err(Error::InvalidLength));
+        assert_eq!(
+            from_bufstr::<BTreeMap::<bool,i32>>(buf, r#"{"true ":0}"#),
+            Err(Error::InvalidType));
     }
 
     #[test]

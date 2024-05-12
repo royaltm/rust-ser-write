@@ -1070,6 +1070,15 @@ mod tests {
         Ok(core::str::from_utf8(writer.split().0).unwrap())
     }
 
+    #[test]
+    fn test_json_serializer() {
+        let mut buf = [0u8;1];
+        let writer = SliceWriter::new(&mut buf);
+        let ser = SerializerByteArray::new(writer);
+        let mut writer: SliceWriter = ser.into_inner();
+        assert_eq!(writer.write_byte(0), Ok(()));
+    }
+
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn test_json_tuple() {
@@ -1117,9 +1126,9 @@ mod tests {
             fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
                 where S: serde::Serializer
             {
-                let mut seq = serializer.serialize_seq(Some(2))?;
-                seq.serialize_element(&self.int)?;
-                seq.serialize_element(&self.seq)?;
+                let mut seq = serializer.serialize_seq(Some(2)).unwrap();
+                seq.serialize_element(&self.int).unwrap();
+                seq.serialize_element(&self.seq).unwrap();
                 seq.end()
             }
         }
@@ -1259,6 +1268,101 @@ mod tests {
         amap.insert(Wrap(true),false);
         let expected = r#"{"true":false}"#;
         assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
+        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        enum CKey {
+            Foo, Bar
+        }
+        let mut amap = BTreeMap::<CKey,char>::new();
+        amap.insert(CKey::Foo,'x');
+        amap.insert(CKey::Bar,'y');
+        let expected = r#"{"Foo":"x","Bar":"y"}"#;
+        assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
+        #[derive(PartialEq, Eq, PartialOrd, Ord)]
+        pub struct DecimalPoint(u32,u32);
+        impl fmt::Display for DecimalPoint {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}.{}", &self.0, &self.1)
+            }
+        }
+        impl serde::Serialize for DecimalPoint {
+            fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+                where S: serde::Serializer
+            {
+                serializer.collect_str(self)
+            }
+        }
+        let mut amap = BTreeMap::<DecimalPoint,char>::new();
+        amap.insert(DecimalPoint(3,14),'x');
+        let expected = r#"{"3.14":"x"}"#;
+        assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
+        // errors
+        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        struct Key {
+            key: i32
+        }
+        let mut amap = BTreeMap::<Key,char>::new();
+        amap.insert(Key { key: 0 },'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        let mut amap = BTreeMap::<(u32,u32),char>::new();
+        amap.insert((1,2),'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        struct TKey(i32,u32);
+        let mut amap = BTreeMap::<TKey,char>::new();
+        amap.insert(TKey(-1,1),'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        let mut amap = BTreeMap::<(),char>::new();
+        amap.insert((),'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        let mut amap = BTreeMap::<Option<&str>,char>::new();
+        amap.insert(None,'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        amap.clear();
+        amap.insert(Some(""),'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        struct Unit;
+        let mut amap = BTreeMap::<Unit,char>::new();
+        amap.insert(Unit,'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        enum EKey {
+            A(i32),
+        }
+        let mut amap = BTreeMap::<EKey,char>::new();
+        amap.insert(EKey::A(-1),'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        enum ETKey {
+            A(i32,u32),
+        }
+        let mut amap = BTreeMap::<ETKey,char>::new();
+        amap.insert(ETKey::A(-1,1),'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        enum ESKey {
+            A { a: i32, b: u32 },
+        }
+        let mut amap = BTreeMap::<ESKey,char>::new();
+        amap.insert(ESKey::A{a:-1,b:1},'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        struct Bytes(#[serde(with="serde_bytes")] Vec<u8>);
+        let mut amap = BTreeMap::<Bytes,char>::new();
+        amap.insert(Bytes(b"_".to_vec()),'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        let mut amap = BTreeMap::<Vec<u32>,char>::new();
+        amap.insert(vec![1,2],'x');
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+
+        let mut amap = BTreeMap::<bool,u8>::new();
+        amap.insert(false,0);
+        let mut buf = [0u8;1];
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;2];
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;7];
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::Writer(SerError::BufferFull)));
     }
 
     #[test]
@@ -1338,6 +1442,32 @@ mod tests {
             to_str(&mut buf, " \u{001f} ").unwrap(),
             r#"" \u001F ""#
         );
+
+        pub struct SimpleDecimal(f32);
+        impl fmt::Display for SimpleDecimal {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{:.2}", &self.0)
+            }
+        }
+        impl serde::Serialize for SimpleDecimal {
+            fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+                where S: serde::Serializer
+            {
+                serializer.collect_str(self)
+            }
+        }
+        let a = SimpleDecimal(core::f32::consts::PI);
+        assert_eq!(
+            to_str(&mut buf, &a).unwrap(),
+            r#""3.14""#
+        );
+        // errors
+        let mut buf = [0u8;0];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;1];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::FormatError));
+        let mut buf = [0u8;5];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
     }
 
     #[test]
@@ -1346,6 +1476,27 @@ mod tests {
         let empty: [&str;0] = [];
         assert_eq!(to_str(&mut buf, &empty).unwrap(), "[]");
         assert_eq!(to_str(&mut buf, &[0, 1, 2]).unwrap(), "[0,1,2]");
+        // errors
+        let mut buf = [0u8;0];
+        assert_eq!(to_str(&mut buf, &[0, 1]), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;2];
+        assert_eq!(to_str(&mut buf, &[0, 1]), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;4];
+        assert_eq!(to_str(&mut buf, &[0, 1]), Err(Error::Writer(SerError::BufferFull)));
+    }
+
+    #[test]
+    fn test_ser_tuple() {
+        let mut buf = [0u8;7];
+        assert_eq!(to_str(&mut buf, &(0i32, 1u8)).unwrap(), "[0,1]");
+        assert_eq!(to_str(&mut buf, &(0i8, 1u32, 2i16)).unwrap(), "[0,1,2]");
+        // errors
+        let mut buf = [0u8;0];
+        assert_eq!(to_str(&mut buf, &(0i8, 1u32)), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;2];
+        assert_eq!(to_str(&mut buf, &(0i8, 1u32)), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;4];
+        assert_eq!(to_str(&mut buf, &(0i8, 1u32)), Err(Error::Writer(SerError::BufferFull)));
     }
 
     #[test]
@@ -1526,9 +1677,12 @@ mod tests {
             b: bool,
         }
 
+        let t = Tuple { a: true, b: false };
         assert_eq!(
-            to_str(&mut buf, &Tuple { a: true, b: false }).unwrap(),
+            to_str(&mut buf, &t).unwrap(),
             r#"{"a":true,"b":false}"#);
+        let mut buf = [0u8;0];
+        assert_eq!(to_str(&mut buf, &t), Err(Error::Writer(SerError::BufferFull)));
     }
 
     #[test]
@@ -1563,6 +1717,19 @@ mod tests {
 
         let a = A::A(54);
         assert_eq!(to_str(&mut buf, &a).unwrap(), r#"{"A":54}"#);
+        // errors
+        let mut buf = [0u8;0];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;1];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;3];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;4];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;5];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;7];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
     }
 
     #[test]
@@ -1577,6 +1744,46 @@ mod tests {
         assert_eq!(
             to_str(&mut buf, &a).unwrap(),
             r#"{"A":{"x":54,"y":720}}"#);
+        // errors
+        let mut buf = [0u8;0];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;1];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;3];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;4];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;5];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;21];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+    }
+
+    #[test]
+    fn test_ser_tuple_variant() {
+        #[derive(Serialize)]
+        enum A {
+            A(u32, u16),
+        }
+        let mut buf = [0u8;14];
+        let a = A::A(54, 720);
+
+        assert_eq!(
+            to_str(&mut buf, &a).unwrap(),
+            r#"{"A":[54,720]}"#);
+        // errors
+        let mut buf = [0u8;0];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;1];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;3];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;4];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;5];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;13];
+        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
     }
 
     #[test]
@@ -1636,5 +1843,57 @@ mod tests {
 
         let sd3 = SimpleDecimal(22222.777777);
         assert_eq!(to_str_pass_bytes(&mut buf, &sd3).unwrap(), r#"22222.78"#);
+    }
+
+    #[test]
+    fn test_ser_error() {
+        let mut buf = [0u8;0];
+        #[derive(Serialize)]
+        struct Bytes<'a>(#[serde(with="serde_bytes")] &'a [u8]);
+        let bytes = Bytes(b"_");
+        assert_eq!(to_str(&mut buf, &bytes), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str_hex_bytes(&mut buf, &bytes), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str_base64_bytes(&mut buf, &bytes), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str_pass_bytes(&mut buf, &bytes), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str(&mut buf, "_"), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str(&mut buf, &true), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str(&mut buf, &()), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;1];
+        assert_eq!(to_str(&mut buf, &bytes), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str_hex_bytes(&mut buf, &bytes), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str_base64_bytes(&mut buf, &bytes), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str(&mut buf, "_"), Err(Error::Writer(SerError::BufferFull)));
+        let mut buf = [0u8;3];
+        assert_eq!(to_str(&mut buf, &bytes), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str_hex_bytes(&mut buf, &bytes), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str_base64_bytes(&mut buf, &bytes), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str(&mut buf, "__"), Err(Error::Writer(SerError::BufferFull)));
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn test_ser_error_string() {
+        assert_eq!(format!("{}", Error::from(SerError::BufferFull)), "buffer is full");
+        assert_eq!(format!("{}", Error::<SerError>::InvalidKeyType), "invalid JSON object key data type");
+        assert_eq!(format!("{}", Error::<SerError>::Utf8Encode), "error encoding JSON as UTF-8 string");
+        assert_eq!(format!("{}", Error::<SerError>::FormatError), "error while collecting a string");
+        let custom: Error<SerError> = serde::ser::Error::custom("xxx");
+        assert_eq!(format!("{}", custom), "xxx while serializing JSON");
+
+        #[derive(Serialize)]
+        struct Bytes<'a>(#[serde(with="serde_bytes")] &'a [u8]);
+        let bytes = Bytes(b"\xFF\xFE");
+        assert_eq!(to_string_pass_bytes(&bytes), Err(Error::Utf8Encode));
+    }
+
+    #[cfg(not(any(feature = "std", feature = "alloc")))]
+    #[test]
+    fn test_ser_error_fmt() {
+        use core::fmt::Write;
+        let mut buf = [0u8;28];
+        let mut writer = SliceWriter::new(&mut buf);
+        let custom: Error<SerError> = serde::ser::Error::custom("xxx");
+        write!(writer, "{}", custom).unwrap();
+        assert_eq!(writer.as_ref(), b"error while serializing JSON");
     }
 }
