@@ -85,7 +85,7 @@ pub enum Error<E> {
     DataLength,
     /// Skipped a field in a struct using compact serializer
     FieldSkipped,
-    /// Error formatting a collected a string
+    /// Error formatting a collected string
     FormatError,
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]

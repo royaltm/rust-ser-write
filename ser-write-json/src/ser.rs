@@ -43,7 +43,7 @@ pub enum Error<E> {
     #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]
     /// Error encoding UTF-8 string with pass-through bytes encoder
     Utf8Encode,
-    /// Error formatting a collected a string
+    /// Error formatting a collected string
     FormatError,
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "alloc"))))]

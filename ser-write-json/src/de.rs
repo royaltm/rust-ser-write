@@ -133,9 +133,9 @@ pub enum Error {
     ExpectedColon,
     /// Expected this character to be either a `','` or a `']'`.
     ExpectedArrayCommaOrEnd,
-    /// Array content starts with a leading `,`.
+    /// Array content starts with a leading `','`.
     LeadingArrayComma,
-    /// Array content ends with a trailing `,`.
+    /// Array content ends with a trailing `','`.
     TrailingArrayComma,
     /// Expected this character to be either a `','` or a `'}'`.
     ExpectedObjectCommaOrEnd,
@@ -143,19 +143,19 @@ pub enum Error {
     LeadingObjectComma,
     /// Object content ends with a trailing `,`.
     TrailingObjectComma,
-    /// Expected to parse either a `true`, `false`, or a `null`.
+    /// Expected to parse either `true`, `false`, or `null`.
     ExpectedToken,
     /// Expected `null`
     ExpectedNull,
-    /// Expected `"` character
+    /// Expected a `"` character
     ExpectedString,
-    /// Expected ']'
+    /// Expected a `']'` character
     ExpectedArrayEnd,
-    /// Expected array
+    /// Expected an array
     ExpectedArray,
-    /// Expected object
+    /// Expected an object
     ExpectedObject,
-    /// Expected object or array
+    /// Expected an object or an array
     ExpectedStruct,
     /// Expected this character to start an enum variant.
     ExpectedEnumValue,
