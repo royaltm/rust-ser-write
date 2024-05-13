@@ -1295,74 +1295,97 @@ mod tests {
         amap.insert(DecimalPoint(3,14),'x');
         let expected = r#"{"3.14":"x"}"#;
         assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
-        // errors
-        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        let mut amap = BTreeMap::<[i32;2],char>::new();
+        amap.insert([1,2], 'x');
+        assert!(to_string(&amap).is_err());
+        assert!(to_string_hex_bytes(&amap).is_err());
+        assert!(to_string_base64_bytes(&amap).is_err());
+        assert!(to_string_pass_bytes(&amap).is_err());
+    }
+
+    #[test]
+    fn test_json_map_err() {
+        use serde::ser::SerializeMap;
+        struct PhonyMap<'a,K,V>(&'a[(K,V)]);
+        impl<'a,K,V> serde::Serialize for PhonyMap<'a,K,V>
+            where K: serde::Serialize, V: serde::Serialize
+        {
+            fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+                where S: serde::Serializer
+            {
+                let mut ma = serializer.serialize_map(None)?;
+                for (k, v) in self.0.iter() {
+                    ma.serialize_entry(k, v)?;
+                }
+                ma.end()
+            }
+        }
+
+        let mut buf = [0u8;9];
+
+        let amap = PhonyMap(&[((),'x')]);
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        #[derive(Serialize)]
         struct Key {
             key: i32
         }
-        let mut amap = BTreeMap::<Key,char>::new();
-        amap.insert(Key { key: 0 },'x');
+        let amap = PhonyMap(&[(Key { key: 0 },'x')]);
         assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
-        let mut amap = BTreeMap::<(u32,u32),char>::new();
-        amap.insert((1,2),'x');
+        let amap = PhonyMap(&[((1,2),'x')]);
         assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
         #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
         struct TKey(i32,u32);
-        let mut amap = BTreeMap::<TKey,char>::new();
-        amap.insert(TKey(-1,1),'x');
+        let amap = PhonyMap(&[(TKey(-1,1),'x')]);
         assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
-        let mut amap = BTreeMap::<(),char>::new();
-        amap.insert((),'x');
+        let amap: PhonyMap<Option<&str>,char> = PhonyMap(&[(None,'x')]);
         assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
-        let mut amap = BTreeMap::<Option<&str>,char>::new();
-        amap.insert(None,'x');
+        let amap: PhonyMap<Option<&str>,char> = PhonyMap(&[(Some(""),'x')]);
         assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
-        amap.clear();
-        amap.insert(Some(""),'x');
-        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
-        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        #[derive(Serialize)]
         struct Unit;
-        let mut amap = BTreeMap::<Unit,char>::new();
-        amap.insert(Unit,'x');
+        let amap = PhonyMap(&[(Unit,'x')]);
         assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
-        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        #[derive(Serialize)]
         enum EKey {
             A(i32),
         }
-        let mut amap = BTreeMap::<EKey,char>::new();
-        amap.insert(EKey::A(-1),'x');
+        let amap = PhonyMap(&[(EKey::A(-1),'x')]);
         assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
-        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        #[derive(Serialize)]
         enum ETKey {
             A(i32,u32),
         }
-        let mut amap = BTreeMap::<ETKey,char>::new();
-        amap.insert(ETKey::A(-1,1),'x');
+        let amap = PhonyMap(&[(ETKey::A(-1,1),'x')]);
         assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
-        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+        #[derive(Serialize)]
         enum ESKey {
             A { a: i32, b: u32 },
         }
-        let mut amap = BTreeMap::<ESKey,char>::new();
-        amap.insert(ESKey::A{a:-1,b:1},'x');
+        let amap = PhonyMap(&[(ESKey::A{a:-1,b:1},'x')]);
         assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
-        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
-        struct Bytes(#[serde(with="serde_bytes")] Vec<u8>);
-        let mut amap = BTreeMap::<Bytes,char>::new();
-        amap.insert(Bytes(b"_".to_vec()),'x');
+        #[derive(Serialize)]
+        struct Bytes<'a>(#[serde(with="serde_bytes")] &'a[u8]);
+        let amap = PhonyMap(&[(Bytes(b"_"),'x')]);
         assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
-        let mut amap = BTreeMap::<Vec<u32>,char>::new();
-        amap.insert(vec![1,2],'x');
+        let binding = [(&[1i32,2][..],'x')];
+        let amap = PhonyMap(&binding);
         assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
-
-        let mut amap = BTreeMap::<bool,u8>::new();
-        amap.insert(false,0);
-        let mut buf = [0u8;1];
-        assert_eq!(to_str(&mut buf, &amap), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;2];
-        assert_eq!(to_str(&mut buf, &amap), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;7];
-        assert_eq!(to_str(&mut buf, &amap), Err(Error::Writer(SerError::BufferFull)));
+        let amap = PhonyMap(&[(0.1f64,'-')]);
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        let amap = PhonyMap(&[(0.1f32,'-')]);
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        let key = PhonyMap(&[(0i8,'-')]);
+        let expected = r#"{"0":"-"}"#;
+        assert_eq!(to_str(&mut buf, &key).unwrap(), expected);
+        let binding = [(key,'-')];
+        let amap = PhonyMap(&binding);
+        assert_eq!(to_str(&mut buf, &amap), Err(Error::InvalidKeyType));
+        let mut buf = [0u8;20];
+        let amap = PhonyMap(&[(false,0),(true,1)]);
+        assert_eq!(to_str(&mut buf, &amap).unwrap(), r#"{"false":0,"true":1}"#);
+        for len in 0..buf.len() {
+            assert_eq!(to_str(&mut buf[..len], &amap), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1374,7 +1397,7 @@ mod tests {
 
     #[test]
     fn test_ser_str() {
-        let mut buf = [0u8;10];
+        let mut buf = [0u8;13];
         assert_eq!(to_str(&mut buf, "hello").unwrap(), r#""hello""#);
         assert_eq!(to_str(&mut buf, "").unwrap(), r#""""#);
 
@@ -1398,49 +1421,42 @@ mod tests {
         // \b, \t, \n, \f, \r must be escaped in their two-character escaping
         assert_eq!(
             to_str(&mut buf, " \u{0008} ").unwrap(),
-            r#"" \b ""#
-        );
+            r#"" \b ""#);
         assert_eq!(
             to_str(&mut buf, " \u{0009} ").unwrap(),
-            r#"" \t ""#
-        );
+            r#"" \t ""#);
         assert_eq!(
             to_str(&mut buf, " \u{000A} ").unwrap(),
-            r#"" \n ""#
-        );
+            r#"" \n ""#);
         assert_eq!(
             to_str(&mut buf, " \u{000C} ").unwrap(),
-            r#"" \f ""#
-        );
+            r#"" \f ""#);
         assert_eq!(
             to_str(&mut buf, " \u{000D} ").unwrap(),
-            r#"" \r ""#
-        );
+            r#"" \r ""#);
 
         // U+0000 through U+001F is escaped using six-character \u00xx uppercase hexadecimal escape sequences
         assert_eq!(
             to_str(&mut buf, " \u{0000} ").unwrap(),
-            r#"" \u0000 ""#
-        );
+            r#"" \u0000 ""#);
         assert_eq!(
             to_str(&mut buf, " \u{0001} ").unwrap(),
-            r#"" \u0001 ""#
-        );
+            r#"" \u0001 ""#);
         assert_eq!(
             to_str(&mut buf, " \u{0007} ").unwrap(),
-            r#"" \u0007 ""#
-        );
+            r#"" \u0007 ""#);
         assert_eq!(
             to_str(&mut buf, " \u{000e} ").unwrap(),
-            r#"" \u000E ""#
-        );
+            r#"" \u000E ""#);
         assert_eq!(
             to_str(&mut buf, " \u{001D} ").unwrap(),
-            r#"" \u001D ""#
-        );
+            r#"" \u001D ""#);
         assert_eq!(
             to_str(&mut buf, " \u{001f} ").unwrap(),
-            r#"" \u001F ""#
+            r#"" \u001F ""#);
+        assert_eq!(
+            to_str(&mut buf, " \t \x00 ").unwrap(),
+            r#"" \t \u0000 ""#
         );
 
         pub struct SimpleDecimal(f32);
@@ -1459,15 +1475,14 @@ mod tests {
         let a = SimpleDecimal(core::f32::consts::PI);
         assert_eq!(
             to_str(&mut buf, &a).unwrap(),
-            r#""3.14""#
-        );
+            r#""3.14""#);
         // errors
-        let mut buf = [0u8;0];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;1];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::FormatError));
-        let mut buf = [0u8;5];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        for len in 0..buf.len() {
+            assert_eq!(to_str(&mut buf[..len], " \t \x00 "), Err(Error::Writer(SerError::BufferFull)));
+        }
+        assert_eq!(to_str(&mut buf[..0], &a), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_str(&mut buf[..1], &a), Err(Error::FormatError));
+        assert_eq!(to_str(&mut buf[..5], &a), Err(Error::Writer(SerError::BufferFull)));
     }
 
     #[test]
@@ -1477,26 +1492,22 @@ mod tests {
         assert_eq!(to_str(&mut buf, &empty).unwrap(), "[]");
         assert_eq!(to_str(&mut buf, &[0, 1, 2]).unwrap(), "[0,1,2]");
         // errors
-        let mut buf = [0u8;0];
-        assert_eq!(to_str(&mut buf, &[0, 1]), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;2];
-        assert_eq!(to_str(&mut buf, &[0, 1]), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;4];
-        assert_eq!(to_str(&mut buf, &[0, 1]), Err(Error::Writer(SerError::BufferFull)));
+        let a: &[u8] = &[0, 1, 2][..];
+        for len in 0..buf.len() {
+            assert_eq!(to_str(&mut buf[..len], a), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
     fn test_ser_tuple() {
         let mut buf = [0u8;7];
         assert_eq!(to_str(&mut buf, &(0i32, 1u8)).unwrap(), "[0,1]");
-        assert_eq!(to_str(&mut buf, &(0i8, 1u32, 2i16)).unwrap(), "[0,1,2]");
+        let a = (0i8, 1u32, 2i16);
+        assert_eq!(to_str(&mut buf, &a).unwrap(), "[0,1,2]");
         // errors
-        let mut buf = [0u8;0];
-        assert_eq!(to_str(&mut buf, &(0i8, 1u32)), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;2];
-        assert_eq!(to_str(&mut buf, &(0i8, 1u32)), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;4];
-        assert_eq!(to_str(&mut buf, &(0i8, 1u32)), Err(Error::Writer(SerError::BufferFull)));
+        for len in 0..buf.len() {
+            assert_eq!(to_str(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1681,8 +1692,9 @@ mod tests {
         assert_eq!(
             to_str(&mut buf, &t).unwrap(),
             r#"{"a":true,"b":false}"#);
-        let mut buf = [0u8;0];
-        assert_eq!(to_str(&mut buf, &t), Err(Error::Writer(SerError::BufferFull)));
+        for len in 0..buf.len() {
+            assert_eq!(to_str(&mut buf[..len], &t), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1718,18 +1730,9 @@ mod tests {
         let a = A::A(54);
         assert_eq!(to_str(&mut buf, &a).unwrap(), r#"{"A":54}"#);
         // errors
-        let mut buf = [0u8;0];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;1];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;3];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;4];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;5];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;7];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        for len in 0..buf.len() {
+            assert_eq!(to_str(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1745,18 +1748,9 @@ mod tests {
             to_str(&mut buf, &a).unwrap(),
             r#"{"A":{"x":54,"y":720}}"#);
         // errors
-        let mut buf = [0u8;0];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;1];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;3];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;4];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;5];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;21];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        for len in 0..buf.len() {
+            assert_eq!(to_str(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1772,18 +1766,9 @@ mod tests {
             to_str(&mut buf, &a).unwrap(),
             r#"{"A":[54,720]}"#);
         // errors
-        let mut buf = [0u8;0];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;1];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;3];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;4];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;5];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
-        let mut buf = [0u8;13];
-        assert_eq!(to_str(&mut buf, &a), Err(Error::Writer(SerError::BufferFull)));
+        for len in 0..buf.len() {
+            assert_eq!(to_str(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1797,13 +1782,16 @@ mod tests {
         assert_eq!(
             to_str(&mut buf, &a).unwrap(),
             r#"[42,"A string",720,false]"#);
+        for len in 0..buf.len() {
+            assert_eq!(to_str(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
     fn test_ser_tuple_struct_roundtrip() {
         use serde::Deserialize;
 
-        #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+        #[derive(Debug, Deserialize, Serialize, PartialEq)]
         struct A<'a>(u32, Option<&'a str>, u16, bool);
 
         let mut buf = [0u8;25];

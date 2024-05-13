@@ -1565,10 +1565,41 @@ mod tests {
         assert!(deser.input.is_empty());
         assert_eq!(deser.index, 0);
 
+        let mut test = [0;0];
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.parse_str_content(), Err(Error::UnexpectedEof));
         let mut test = [0;2];
         test.copy_from_slice(b"\n\"");
         let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
         assert_eq!(deser.parse_str_content(), Err(Error::StringControlChar));
+        let mut test = [0;1];
+        test.copy_from_slice(br"\");
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.parse_str_content(), Err(Error::UnexpectedEof));
+
+        let mut test = [0;1];
+        test.copy_from_slice(br#"""#);
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.eat_str_content(), Ok(()));
+        let mut test = [0;3];
+        test.copy_from_slice(br#"\\""#);
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.eat_str_content(), Ok(()));
+        let mut test = [0;0];
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.eat_str_content(), Err(Error::UnexpectedEof));
+        let mut test = [0;3];
+        test.copy_from_slice(br#" 1_"#);
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.eat_str_content(), Err(Error::UnexpectedEof));
+        let mut test = [0;2];
+        test.copy_from_slice(br#"\""#);
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.eat_str_content(), Err(Error::UnexpectedEof));
+        let mut test = [0;3];
+        test.copy_from_slice(b" \t ");
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.eat_str_content(), Err(Error::StringControlChar));
     }
 
     #[test]
@@ -1625,13 +1656,46 @@ mod tests {
         let bytes: &[u8] = from_mut_slice_hex_bytes(&mut test).unwrap();
         assert_eq!(bytes, [0xff,0x00,0xab,0xab]);
 
+        let mut test = [0;4]; test.copy_from_slice(br#""ABC"#);
+        assert_eq!(from_mut_slice_hex_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedEof));
+        let mut test = [0;4]; test.copy_from_slice(br#""ABx"#);
+        assert_eq!(from_mut_slice_hex_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedEof));
+        let mut test = [0;5]; test.copy_from_slice(br#""ABCx"#);
+        assert_eq!(from_mut_slice_hex_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedChar));
+        let mut test = [0;5]; test.copy_from_slice(br#""ABxy"#);
+        assert_eq!(from_mut_slice_hex_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedChar));
+        let mut test = [0;0];
+        assert_eq!(from_mut_slice_hex_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedEof));
+        let mut test = [0;3]; test.copy_from_slice(br#""\""#);
+        assert_eq!(from_mut_slice_hex_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedChar));
+
+        let mut test = [0;13]; test.copy_from_slice(br#""/wCrqw=====""#);
+        let bytes: &[u8] = from_mut_slice_base64_bytes(&mut test).unwrap();
+        assert_eq!(bytes, [0xff,0x00,0xab,0xab]);
         let mut test = [0;10]; test.copy_from_slice(br#""/wCrqw==""#);
         let bytes: &[u8] = from_mut_slice_base64_bytes(&mut test).unwrap();
         assert_eq!(bytes, [0xff,0x00,0xab,0xab]);
-
+        let mut test = [0;9]; test.copy_from_slice(br#""/wCrqw=""#);
+        let bytes: &[u8] = from_mut_slice_base64_bytes(&mut test).unwrap();
+        assert_eq!(bytes, [0xff,0x00,0xab,0xab]);
         let mut test = [0;8]; test.copy_from_slice(br#""/wCrqw""#);
         let bytes: &[u8] = from_mut_slice_base64_bytes(&mut test).unwrap();
         assert_eq!(bytes, [0xff,0x00,0xab,0xab]);
+
+        let mut test = [0;2]; test.copy_from_slice(br#""\"#);
+        assert_eq!(from_mut_slice_base64_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedChar));
+        let mut test = [0;1]; test.copy_from_slice(br#"""#);
+        assert_eq!(from_mut_slice_base64_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedEof));
+        let mut test = [0;2]; test.copy_from_slice(br#""="#);
+        assert_eq!(from_mut_slice_base64_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedEof));
+        let mut test = [0;3]; test.copy_from_slice(br#""//"#);
+        assert_eq!(from_mut_slice_base64_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedEof));
+        let mut test = [0;5]; test.copy_from_slice(br#""//=="#);
+        assert_eq!(from_mut_slice_base64_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedEof));
+        let mut test = [0;5]; test.copy_from_slice(br#""//=x"#);
+        assert_eq!(from_mut_slice_base64_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedChar));
+        let mut test = [0;7]; test.copy_from_slice(br#""//===x"#);
+        assert_eq!(from_mut_slice_base64_bytes::<&[u8]>(&mut test), Err(Error::UnexpectedChar));
 
         let mut test = [0;0]; test.copy_from_slice(b"");
         assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
@@ -1644,15 +1708,23 @@ mod tests {
         let mut test = [0;4]; test.copy_from_slice(br#""Xy""#);
         assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
         let mut test = [0;1]; test.copy_from_slice(b"[");
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        assert!(from_mut_slice::<&[u8]>(&mut test).is_err());
         let mut test = [0;4]; test.copy_from_slice(b"[-1]");
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        assert!(from_mut_slice::<&[u8]>(&mut test).is_err());
         let mut test = [0;5]; test.copy_from_slice(b"[256]");
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        assert!(from_mut_slice::<&[u8]>(&mut test).is_err());
         let mut test = [0;3]; test.copy_from_slice(b"[,]");
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        assert!(from_mut_slice::<&[u8]>(&mut test).is_err());
         let mut test = [0;4]; test.copy_from_slice(b"[0,]");
-        assert!(from_mut_slice_hex_bytes::<&[u8]>(&mut test).is_err());
+        assert!(from_mut_slice::<&[u8]>(&mut test).is_err());
+        let mut test = [0;1]; test.copy_from_slice(br#"["#);
+        assert_eq!(from_mut_slice::<&[u8]>(&mut test), Err(Error::UnexpectedEof));
+        let mut test = [0;2]; test.copy_from_slice(br#"[0"#);
+        assert_eq!(from_mut_slice::<&[u8]>(&mut test), Err(Error::UnexpectedEof));
+        let mut test = [0;3]; test.copy_from_slice(br#"[0."#);
+        assert_eq!(from_mut_slice::<&[u8]>(&mut test), Err(Error::UnexpectedChar));
+        let mut test = [0;1]; test.copy_from_slice(br#"{"#);
+        assert_eq!(from_mut_slice::<&[u8]>(&mut test), Err(Error::UnexpectedChar));
 
         use serde::Serialize;
 
@@ -1874,13 +1946,18 @@ mod tests {
     fn test_de_array() {
         assert_eq!(from_str::<[i32; 0]>("[]"), Ok(([], 2)));
         assert_eq!(from_str("[0, 1, 2]"), Ok(([0, 1, 2], 9)));
-
         // errors
+        assert_eq!(from_str::<[i32; 2]>(""), Err(Error::UnexpectedEof));
         assert_eq!(from_str::<[i32; 2]>("{}"), Err(Error::ExpectedArray));
-        assert_eq!(from_str::<[i32; 2]>("[0, 1,]"), Err(Error::ExpectedArrayEnd));
+        assert_eq!(from_str::<[i32; 2]>("[0, 1,"), Err(Error::ExpectedArrayEnd));
         assert_eq!(from_str::<[i32; 3]>("[0, 1,]"), Err(Error::TrailingArrayComma));
         assert_eq!(from_str::<[i32; 2]>("[,]"), Err(Error::LeadingArrayComma));
         assert_eq!(from_str::<[i32; 2]>("[, 0]"), Err(Error::LeadingArrayComma));
+        assert_eq!(from_str::<[i32; 2]>("[0}"), Err(Error::ExpectedArrayCommaOrEnd));
+        assert_eq!(from_str::<[i32; 2]>("["), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<[i32; 2]>("[0"), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<[i32; 2]>("[0,"), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<[i32; 2]>("[0,1"), Err(Error::UnexpectedEof));
     }
 
     #[test]
@@ -1892,10 +1969,14 @@ mod tests {
         assert_eq!(from_str("false"), Ok((false, 5)));
         assert_eq!(from_str(" false"), Ok((false, 6)));
         assert_eq!(from_str("false "), Ok((false, 6)));
-
         // errors
-        assert!(from_str::<bool>("true false").is_err());
-        assert!(from_str::<bool>("tru").is_err());
+        assert_eq!(from_str::<bool>(""), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<bool>("true false"), Err(Error::TrailingCharacters));
+        assert_eq!(from_str::<bool>("tru"), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<bool>("truy"), Err(Error::ExpectedToken));
+        assert_eq!(from_str::<bool>("fals"), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<bool>("falsy"), Err(Error::ExpectedToken));
+        assert_eq!(from_str::<bool>("n"), Err(Error::UnexpectedChar));
     }
 
     #[test]
@@ -1910,28 +1991,50 @@ mod tests {
         let (f, len): (f64, _) = from_str("null").unwrap();
         assert_eq!(len, 4);
         assert!(f.is_nan());
-        assert!(from_str::<f32>("a").is_err());
-        assert!(from_str::<f64>(",").is_err());
+        assert_eq!(from_str::<f32>(""), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<f32>("n"), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<f32>(","), Err(Error::InvalidNumber));
+        assert_eq!(from_str::<f64>(","), Err(Error::InvalidNumber));
+        assert_eq!(from_str::<f32>("-"), Err(Error::InvalidNumber));
+        assert_eq!(from_str::<f64>("-"), Err(Error::InvalidNumber));
     }
 
     #[test]
     fn test_de_integer() {
-        assert_eq!(from_str("5"), Ok((5, 1)));
-        assert_eq!(from_str("101"), Ok((101u8, 3)));
-        assert_eq!(from_str("101"), Ok((101u16, 3)));
-        assert_eq!(from_str("101"), Ok((101u32, 3)));
-        assert_eq!(from_str("101"), Ok((101u64, 3)));
-        assert_eq!(from_str("-101"), Ok((-101i8, 4)));
-        assert_eq!(from_str("-101"), Ok((-101i16, 4)));
-        assert_eq!(from_str("-101"), Ok((-101i32, 4)));
-        assert_eq!(from_str("-101"), Ok((-101i64, 4)));
-        assert!(from_str::<u16>("-01").is_err());
-        assert!(from_str::<u16>("00").is_err());
-        assert!(from_str::<u16>("-1").is_err());
-        assert!(from_str::<u16>("1e5").is_err());
-        assert!(from_str::<u8>("256").is_err());
-        assert!(from_str::<i8>("-129").is_err());
-        assert!(from_str::<f32>(",").is_err());
+        macro_rules! test_de_signed {
+            ($($ty:ty),*) => {$(
+                assert_eq!(from_str::<$ty>("-128"), Ok((-128, 4)));
+                assert_eq!(from_str::<$ty>("-1"), Ok((-1, 2)));
+                assert_eq!(from_str::<$ty>("-0"), Ok((0, 2)));
+                assert_eq!(from_str::<$ty>("-01"), Err(Error::TrailingCharacters));
+                assert_eq!(from_str::<$ty>("-"), Err(Error::UnexpectedEof));
+                assert_eq!(from_str::<$ty>("-1234567890123456789012345678901234567890"), Err(Error::InvalidNumber));
+            )*};
+        }
+        macro_rules! test_de_unsigned {
+            ($($ty:ty),*) => {$(
+                assert_eq!(from_str::<$ty>("0"), Ok((0, 1)));
+                assert_eq!(from_str::<$ty>("1"), Ok((1, 1)));
+                assert_eq!(from_str::<$ty>("-1"), Err(Error::InvalidNumber));
+                assert_eq!(from_str::<$ty>("-01"), Err(Error::InvalidNumber));
+            )*};
+        }
+        macro_rules! test_de_int {
+            ($($ty:ty),*) => {$(
+                assert_eq!(from_str::<$ty>("5"), Ok((5, 1)));
+                assert_eq!(from_str::<$ty>("127"), Ok((127, 3)));
+                assert_eq!(from_str::<$ty>(","), Err(Error::InvalidType));
+                assert_eq!(from_str::<$ty>(""), Err(Error::UnexpectedEof));
+                assert_eq!(from_str::<$ty>("00"), Err(Error::TrailingCharacters));
+                assert_eq!(from_str::<$ty>("1e5"), Err(Error::TrailingCharacters));
+                assert_eq!(from_str::<$ty>("1234567890123456789012345678901234567890"), Err(Error::InvalidNumber));
+            )*};
+        }
+        test_de_signed!(i8,i16,i32,i64);
+        test_de_unsigned!(u8,u16,u32,u64);
+        test_de_int!(i8,i16,i32,i64,u8,u16,u32,u64);
+        assert_eq!(from_str::<u8>("256"), Err(Error::InvalidNumber));
+        assert_eq!(from_str::<i8>("-129"), Err(Error::InvalidNumber));
     }
 
     #[test]
@@ -1952,6 +2055,7 @@ mod tests {
         #[cfg(not(any(feature = "std", feature = "alloc")))]
         assert_eq!(from_str::<Type>(r#" "xyz" "#), Err(Error::DeserializeError));
 
+        assert_eq!(from_str::<Type>(r#"{"boolean":null}"#), Err(Error::InvalidType));
         assert_eq!(from_str::<Type>(r#" {} "#), Err(Error::ExpectedString));
         assert_eq!(from_str::<Type>(r#" [] "#), Err(Error::ExpectedEnumValue));
     }
@@ -2009,11 +2113,31 @@ mod tests {
             Ok((r#"foo bar\\\\"#, 19))
         );
         assert_eq!(from_bufstr(buf, r#" "\\" "#), Ok((r#"\"#, 6)));
+        // errors
+        assert_eq!(from_bufstr::<&str>(buf, ""), Err(Error::UnexpectedEof));
         assert_eq!(from_bufstr::<&str>(buf, r#" "\x" "#), Err(Error::InvalidEscapeSequence));
         assert_eq!(from_bufstr::<&str>(buf, r#" "\c" "#), Err(Error::InvalidEscapeSequence));
+        assert_eq!(from_bufstr::<&str>(buf, r#" "\ux000" "#), Err(Error::InvalidEscapeSequence));
+        assert_eq!(from_bufstr::<&str>(buf, r#" "\u0x00" "#), Err(Error::InvalidEscapeSequence));
+        assert_eq!(from_bufstr::<&str>(buf, r#" "\u00x0" "#), Err(Error::InvalidEscapeSequence));
+        assert_eq!(from_bufstr::<&str>(buf, r#" "\u000x" "#), Err(Error::InvalidEscapeSequence));
         assert_eq!(from_bufstr::<&str>(buf, r#" "\u000" "#), Err(Error::InvalidEscapeSequence));
         assert_eq!(from_bufstr::<&str>(buf, r#" "\uD800" "#), Err(Error::InvalidUnicodeCodePoint));
         assert_eq!(from_bufstr::<&str>(buf, r#" "\uDFFF" "#), Err(Error::InvalidUnicodeCodePoint));
+        buf[0..4].copy_from_slice(b"\"\xff\xfe\"");
+        assert_eq!(from_mut_slice::<&str>(&mut buf[0..4]), Err(Error::InvalidUnicodeCodePoint));
+    }
+
+    #[test]
+    fn test_de_char() {
+        assert_eq!(from_str::<char>(r#""A""#), Ok(('A', 3)));
+        assert_eq!(from_str::<char>(r#"" ""#), Ok((' ', 3)));
+        assert_eq!(from_str::<char>(r#""\t""#), Ok(('\t', 4)));
+        assert_eq!(from_str::<char>(r#""👏""#), Ok(('👏', 6)));
+        assert_eq!(from_str::<char>(""), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<char>("["), Err(Error::ExpectedString));
+        assert_eq!(from_str::<char>(r#""ab""#), Err(Error::InvalidLength));
+        assert_eq!(from_str::<char>(r#""\""#), Err(Error::UnexpectedEof));
     }
 
     #[test]
@@ -2056,6 +2180,7 @@ mod tests {
             Ok((Test {foo:5, bar: 999.9}, 9))
         );
         // errors
+        assert_eq!(from_str::<Test>(""), Err(Error::UnexpectedEof));
         assert_eq!(from_str::<Test>(r#""""#), Err(Error::ExpectedStruct));
         assert_eq!(from_str::<Test>(r#"{"foo":0]"#), Err(Error::ExpectedObjectCommaOrEnd));
         assert_eq!(from_str::<Test>(r#"{"foo":0,}"#), Err(Error::TrailingObjectComma));
@@ -2185,6 +2310,7 @@ mod tests {
         assert!(from_str::<Temperature>(r#"{ "temperature": 0.0. }"#).is_err());
         assert!(from_str::<Temperature>(r#"{ "temperature": ä }"#).is_err());
         assert!(from_str::<Temperature>(r#"{ "temperature": None }"#).is_err());
+        assert!(from_str::<Temperature>(r#"{"temperature":+}"#).is_err());
     }
 
     #[test]
@@ -2219,19 +2345,30 @@ mod tests {
     }
 
     #[test]
-    fn test_de_test_unit() {
+    fn test_de_unit() {
         assert_eq!(from_str(r#"null"#), Ok(((), 4)));
         #[derive(Debug, Deserialize, PartialEq)]
         struct Unit;
         assert_eq!(from_str(r#"null"#), Ok((Unit, 4)));
+        assert_eq!(from_str::<()>("x"), Err(Error::ExpectedNull));
+        assert_eq!(from_str::<Unit>("x"), Err(Error::ExpectedNull));
+        assert_eq!(from_str::<()>("nil"), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<Unit>("nil"), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<()>("nill"), Err(Error::ExpectedToken));
+        assert_eq!(from_str::<Unit>("nill"), Err(Error::ExpectedToken));
+        assert_eq!(from_str::<()>(""), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<Unit>(""), Err(Error::UnexpectedEof));
     }
 
     #[test]
-    fn test_de_newtype_struct() {
-        #[derive(Deserialize, Debug, PartialEq)]
-        struct A(u32);
-
-        assert_eq!(from_str::<A>(r#"54"#), Ok((A(54), 2)));
+    fn test_de_option() {
+        assert_eq!(from_str::<Option<bool>>(r#"null"#), Ok((None, 4)));
+        assert_eq!(from_str::<Option<bool>>(r#"true"#), Ok((Some(true), 4)));
+        assert_eq!(from_str::<Option<bool>>(r#"false"#), Ok((Some(false), 5)));
+        assert_eq!(from_str::<Option<bool>>("x"), Err(Error::UnexpectedChar));
+        assert_eq!(from_str::<Option<bool>>("nil"), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<Option<bool>>("nill"), Err(Error::ExpectedToken));
+        assert_eq!(from_str::<Option<bool>>(""), Err(Error::UnexpectedEof));
     }
 
     #[test]
@@ -2241,22 +2378,63 @@ mod tests {
             A(u32),
         }
         let a = A::A(54);
-        let x = from_str::<A>(r#"{"A":54}"#);
-        assert_eq!(x, Ok((a, 8)));
+        let (x, len) = from_str::<A>(r#"{"A":54}"#).unwrap();
+        assert_eq!(len, 8);
+        assert_eq!(x, a);
+        let (y, len) = from_str::<A>(r#" { "A" : 54 } "#).unwrap();
+        assert_eq!(len, 14);
+        assert_eq!(x, y);
+        assert_eq!(from_str::<A>(r#""A""#), Err(Error::InvalidType));
+        assert_eq!(from_str::<A>(r#"{"A","#), Err(Error::ExpectedColon));
+        assert_eq!(from_str::<A>(r#"{"A":54,"#), Err(Error::ExpectedEnumObjectEnd));
+        assert_eq!(from_str::<A>(r#"{"A":54"#), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<A>(r#" "#), Err(Error::UnexpectedEof));
     }
 
     #[test]
     fn test_de_struct_variant() {
-        #[derive(Deserialize, Debug, PartialEq, Clone, Copy)]
+        #[derive(Deserialize, Debug, PartialEq)]
         enum A {
             A { x: u32, y: u16 },
         }
         let a = A::A { x: 54, y: 720 };
-        let x = from_str::<A>(r#"{"A": {"x":54,"y":720 } }"#).unwrap();
-        assert_eq!(x, (a, 25));
-        let y = from_str::<A>(r#"{"A": [54,720] }"#).unwrap();
-        assert_eq!(y.0, x.0);
-        assert_eq!(y, (a, 16));
+        let (x, len) = from_str::<A>(r#"{"A":{"x":54,"y":720}}"#).unwrap();
+        assert_eq!(len, 22);
+        assert_eq!(x, a);
+        let (z, len) = from_str::<A>(r#" { "A"  : { "x" : 54 , "y" : 720 } } "#).unwrap();
+        assert_eq!(len, 37);
+        assert_eq!(z, x);
+        let (y, len) = from_str::<A>(r#"{"A":[54,720]}"#).unwrap();
+        assert_eq!(len, 14);
+        assert_eq!(y, z);
+        let (yy, len) = from_str::<A>(r#" { "A" : [ 54 , 720 ] } "#).unwrap();
+        assert_eq!(len, 24);
+        assert_eq!(yy, y);
+        assert_eq!(from_str::<A>(r#""A""#), Err(Error::InvalidType));
+    }
+
+    #[test]
+    fn test_de_tuple_variant() {
+        #[derive(Deserialize, Debug, PartialEq)]
+        enum A {
+            A(i32,u16),
+        }
+        let a = A::A(-981,10000);
+        let (x, len) = from_str::<A>(r#"{"A":[-981,10000]}"#).unwrap();
+        assert_eq!(len, 18);
+        assert_eq!(x, a);
+        let (y, len) = from_str::<A>(r#" { "A" : [ -981 , 10000 ] } "#).unwrap();
+        assert_eq!(len, 28);
+        assert_eq!(y, x);
+        assert_eq!(from_str::<A>(r#""A""#), Err(Error::InvalidType));
+    }
+
+    #[test]
+    fn test_de_newtype_struct() {
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct A(u32);
+
+        assert_eq!(from_str::<A>(r#"54"#), Ok((A(54), 2)));
     }
 
     #[test]
@@ -2337,54 +2515,92 @@ mod tests {
 
         assert_eq!(
             from_str(r#"{ "temperature": 20, "high": 80, "low": -10, "updated": true, "unused": null }"#),
-            Ok((Temperature { temperature: 20 }, 78))
-        );
+            Ok((Temperature { temperature: 20 }, 78)));
 
         assert_eq!(
             from_str(
                 r#"{ "temperature": 20, "conditions": "windy", "forecast": "cloudy" }"#
             ),
-            Ok((Temperature { temperature: 20 }, 66))
-        );
+            Ok((Temperature { temperature: 20 }, 66)));
 
         assert_eq!(
             from_str(r#"{ "temperature": 20, "hourly_conditions": ["windy", "rainy"] }"#),
-            Ok((Temperature { temperature: 20 }, 62))
-        );
+            Ok((Temperature { temperature: 20 }, 62)));
 
         assert_eq!(
             from_str(
                 r#"{ "temperature"  :  20, "source": { "station": "dock", "sensors": ["front", "back"] } }"#
             ),
-            Ok((Temperature { temperature: 20 }, 87))
-        );
+            Ok((Temperature { temperature: 20 }, 87)));
 
         assert_eq!(
             from_str(
                 r#"{ "source": { "station": "dock", "sensors": ["\\", "\"", "x\\\"y\\"] }, "temperature":20}"#
             ),
-            Ok((Temperature { temperature: 20 }, 89))
-        );
-
+            Ok((Temperature { temperature: 20 }, 89)));
+        // errors
         assert_eq!(
             from_str::<Temperature>(r#"{ "temperature": 20, "invalid": this-is-not-ignored }"#),
-            Err(Error::ExpectedToken)
-        );
-
+            Err(Error::ExpectedToken));
         assert_eq!(
             from_str::<Temperature>(r#"{ "temperature": 20, "broken": }"#),
-            Err(Error::UnexpectedChar)
-        );
-
+            Err(Error::UnexpectedChar));
         assert_eq!(
             from_str::<Temperature>(r#"{ "temperature": 20, "broken": [ }"#),
-            Err(Error::UnexpectedChar)
-        );
-
+            Err(Error::UnexpectedChar));
         assert_eq!(
             from_str::<Temperature>(r#"{ "temperature": 20, "broken": ] }"#),
-            Err(Error::UnexpectedChar)
-        );
+            Err(Error::UnexpectedChar));
+        assert_eq!(
+            from_str::<Temperature>(r#"{"temperature":20,"broken":1"#),
+            Err(Error::UnexpectedEof));
+        assert_eq!(
+            from_str::<Temperature>(r#"{"temperature":20,"broken":"#),
+            Err(Error::UnexpectedEof));
+        assert_eq!(
+            from_str::<Temperature>(r#"{"temperature":20,"broken":""#),
+            Err(Error::UnexpectedEof));
+        assert_eq!(
+            from_str::<Temperature>(r#"{"temperature":20,"#),
+            Err(Error::UnexpectedEof));
+    }
+    #[test]
+    fn test_de_map_err() {
+        use core::marker::PhantomData;
+        use serde::de::Deserializer;
+        #[derive(Debug, PartialEq)]
+        struct PhonyMap(Option<(i32,i32)>);
+        struct PhonyMapVisitor(PhantomData<PhonyMap>);
+        impl<'de> Visitor<'de> for PhonyMapVisitor {
+            type Value = PhonyMap;
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a map")
+            }
+            fn visit_map<M: MapAccess<'de>>(self, mut access: M) -> core::result::Result<Self::Value, M::Error> {
+                if let Some((k, v)) = access.next_entry()? {
+                    return Ok(PhonyMap(Some((k,v))))
+                }
+                Ok(PhonyMap(None))
+            }
+        }
+        impl<'de> Deserialize<'de> for PhonyMap {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> core::result::Result<Self, D::Error> {
+                deserializer.deserialize_any(PhonyMapVisitor(PhantomData))
+            }
+        }
+        assert_eq!(
+            from_str::<PhonyMap>(r#"{}"#),
+            Ok((PhonyMap(None), 2)));
+        assert_eq!(
+            from_str::<PhonyMap>(r#"{"0":1}"#),
+            Ok((PhonyMap(Some((0,1))), 7)));
+        assert_eq!(from_str::<PhonyMap>(r#""#), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<PhonyMap>(r#"{"#), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<PhonyMap>(r#"{"":0}"#), Err(Error::InvalidType));
+        assert_eq!(from_str::<PhonyMap>(r#"{"0":1"#), Err(Error::UnexpectedEof));
+        assert_eq!(from_str::<PhonyMap>(r#"{"0":1]"#), Err(Error::ExpectedObjectEnd));
+        assert_eq!(from_str::<PhonyMap>(r#"{"0":1,"#), Err(Error::ExpectedObjectEnd));
+        assert!(from_str::<PhonyMap>(r#"[]"#).is_err());
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
@@ -2411,6 +2627,21 @@ mod tests {
                     from_bufstr(buf, &s),
                     Ok((amap, s.len())));
                 // errors
+                assert_eq!(
+                    from_bufstr::<BTreeMap::<$ty,&str>>(buf, r#"{"0"#),
+                    Err(Error::UnexpectedEof));
+                assert_eq!(
+                    from_bufstr::<BTreeMap::<$ty,&str>>(buf, r#"{"0""#),
+                    Err(Error::UnexpectedEof));
+                assert_eq!(
+                    from_bufstr::<BTreeMap::<$ty,&str>>(buf, r#"{"0":"#),
+                    Err(Error::UnexpectedEof));
+                assert_eq!(
+                    from_bufstr::<BTreeMap::<$ty,&str>>(buf, r#"{"0":"""#),
+                    Err(Error::UnexpectedEof));
+                assert_eq!(
+                    from_bufstr::<BTreeMap::<$ty,&str>>(buf, r#"{"0":"","#),
+                    Err(Error::UnexpectedEof));
                 assert_eq!(
                     from_bufstr::<BTreeMap::<$ty,&str>>(buf, r#"{ "  0 " : "" }"#),
                     Err(Error::InvalidNumber));
@@ -2480,6 +2711,24 @@ mod tests {
         assert_eq!(
             from_bufstr::<BTreeMap::<bool,i32>>(buf, r#"{"true ":0}"#),
             Err(Error::InvalidType));
+        assert_eq!(
+            from_bufstr::<BTreeMap::<&str,i8>>(buf, r#"[]"#),
+            Err(Error::ExpectedObject));
+        assert_eq!(
+            from_bufstr::<BTreeMap::<&str,i8>>(buf, r#"{"x":9]"#),
+            Err(Error::ExpectedObjectCommaOrEnd));
+        assert_eq!(
+            from_bufstr::<BTreeMap::<i8,i8>>(buf, r#"{1:1}"#),
+            Err(Error::KeyMustBeAString));
+        assert_eq!(
+            from_bufstr::<BTreeMap::<bool,i8>>(buf, r#"{"null":0}"#),
+            Err(Error::UnexpectedChar));
+        assert_eq!(
+            from_bufstr::<BTreeMap::<bool,i8>>(buf, r#"{"truu":0}"#),
+            Err(Error::ExpectedToken));
+        assert_eq!(
+            from_bufstr::<BTreeMap::<bool,i8>>(buf, r#"{"true"#),
+            Err(Error::UnexpectedEof));
     }
 
     #[test]
@@ -2633,5 +2882,57 @@ mod tests {
         assert_eq!(
             from_bufstr(&mut buf, input),
             Ok((Thing::Map{a:126,b:"zyx"}, input.len())));
+        // errors
+        assert_eq!(from_bufstr::<Thing>(&mut buf, ""), Err(Error::UnexpectedEof));
+        assert_eq!(from_bufstr::<Thing>(&mut buf, "x"), Err(Error::UnexpectedChar));
+        assert_eq!(from_bufstr::<Thing>(&mut buf, "-"), Err(Error::InvalidNumber));
+        assert_eq!(from_bufstr::<Thing>(&mut buf, "-+"), Err(Error::InvalidNumber));
+        assert_eq!(from_bufstr::<Thing>(&mut buf, "2.+"), Err(Error::InvalidNumber));
+        assert_eq!(from_bufstr::<Thing>(&mut buf, "2+"), Err(Error::InvalidNumber));
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn test_de_error_string() {
+        assert_eq!(&format!("{}", Error::UnexpectedEof), "Unexpected end of JSON input");
+        assert_eq!(&format!("{}", Error::InvalidEscapeSequence), "Invalid JSON string escape sequence");
+        assert_eq!(&format!("{}", Error::StringControlChar), "A control ASCII character found in a JSON string");
+        assert_eq!(&format!("{}", Error::ExpectedArrayCommaOrEnd), "Expected `','` or `']'`");
+        assert_eq!(&format!("{}", Error::ExpectedArrayEnd), "Expected ']'");
+        assert_eq!(&format!("{}", Error::LeadingArrayComma), "JSON array content starts with a leading `','`");
+        assert_eq!(&format!("{}", Error::TrailingArrayComma), "JSON array content ends with a trailing `','`");
+        assert_eq!(&format!("{}", Error::ExpectedObjectCommaOrEnd), "Expected `','` or `'}'`");
+        assert_eq!(&format!("{}", Error::ExpectedObjectEnd), "Expected `'}'`");
+        assert_eq!(&format!("{}", Error::LeadingObjectComma), "JSON object content starts with a leading `','`");
+        assert_eq!(&format!("{}", Error::TrailingObjectComma), "JSON object content ends with a trailing `','`");
+        assert_eq!(&format!("{}", Error::ExpectedColon), "Expected `':'`");
+        assert_eq!(&format!("{}", Error::ExpectedToken), "Expected either `true`, `false`, or `null`.");
+        assert_eq!(&format!("{}", Error::ExpectedNull), "Expected `null`");
+        assert_eq!(&format!("{}", Error::ExpectedString), r#"Expected `'"'`"#);
+        assert_eq!(&format!("{}", Error::ExpectedArray), "Expeced a JSON array");
+        assert_eq!(&format!("{}", Error::ExpectedObject), "Expected a JSON object");
+        assert_eq!(&format!("{}", Error::ExpectedStruct), "Expected a JSON object or an array");
+        assert_eq!(&format!("{}", Error::ExpectedEnumValue), r#"Expected this character to be `'"'` or `'{'`"#);
+        assert_eq!(&format!("{}", Error::ExpectedEnumObjectEnd), "Expected this character to be `'}'`");
+        assert_eq!(&format!("{}", Error::InvalidNumber), "Invalid number");
+        assert_eq!(&format!("{}", Error::InvalidType), "Invalid type");
+        assert_eq!(&format!("{}", Error::InvalidUnicodeCodePoint), "Invalid unicode code point");
+        assert_eq!(&format!("{}", Error::KeyMustBeAString), "Object key is not a string");
+        assert_eq!(&format!("{}", Error::TrailingCharacters), "JSON has non-whitespace trailing character after the value");
+        assert_eq!(&format!("{}", Error::UnexpectedChar), "Unexpected token while parsing a JSON value");
+        assert_eq!(&format!("{}", Error::InvalidLength), "Invalid length");
+        let custom: Error = serde::de::Error::custom("xxx");
+        assert_eq!(format!("{}", custom), "xxx while deserializing JSON");
+    }
+
+    #[cfg(not(any(feature = "std", feature = "alloc")))]
+    #[test]
+    fn test_de_error_fmt() {
+        use core::fmt::Write;
+        let mut buf = [0u8;52];
+        let mut writer = SliceWriter::new(&mut buf);
+        let custom: Error = serde::de::Error::custom("xxx");
+        write!(writer, "{}", custom).unwrap();
+        assert_eq!(writer.as_ref(), "JSON does not match deserializer’s expected format".as_bytes());
     }
 }
