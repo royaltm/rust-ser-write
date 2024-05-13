@@ -133,12 +133,16 @@ pub enum Error {
     ExpectedColon,
     /// Expected this character to be either a `','` or a `']'`.
     ExpectedArrayCommaOrEnd,
+    /// Expected a `']'` character
+    ExpectedArrayEnd,
     /// Array content starts with a leading `','`.
     LeadingArrayComma,
     /// Array content ends with a trailing `','`.
     TrailingArrayComma,
     /// Expected this character to be either a `','` or a `'}'`.
     ExpectedObjectCommaOrEnd,
+    /// Expected this character to be `'}'`.
+    ExpectedObjectEnd,
     /// Object content starts with a leading `,`.
     LeadingObjectComma,
     /// Object content ends with a trailing `,`.
@@ -149,8 +153,6 @@ pub enum Error {
     ExpectedNull,
     /// Expected a `"` character
     ExpectedString,
-    /// Expected a `']'` character
-    ExpectedArrayEnd,
     /// Expected an array
     ExpectedArray,
     /// Expected an object
@@ -206,9 +208,11 @@ impl fmt::Display for Error {
             Error::InvalidEscapeSequence => "Invalid JSON string escape sequence",
             Error::StringControlChar => "A control ASCII character found in a JSON string",
             Error::ExpectedArrayCommaOrEnd => "Expected `','` or `']'`",
+            Error::ExpectedArrayEnd => "Expected ']'",
             Error::LeadingArrayComma => "JSON array content starts with a leading `','`",
             Error::TrailingArrayComma => "JSON array content ends with a trailing `','`",
             Error::ExpectedObjectCommaOrEnd => "Expected `','` or `'}'`",
+            Error::ExpectedObjectEnd => "Expected `'}'`",
             Error::LeadingObjectComma => "JSON object content starts with a leading `','`",
             Error::TrailingObjectComma => "JSON object content ends with a trailing `','`",
             Error::ExpectedColon => "Expected `':'`",
@@ -217,7 +221,6 @@ impl fmt::Display for Error {
             }
             Error::ExpectedNull => "Expected `null`",
             Error::ExpectedString => r#"Expected `'"'`"#,
-            Error::ExpectedArrayEnd => "Expected ']'",
             Error::ExpectedArray => "Expeced a JSON array",
             Error::ExpectedObject => "Expected a JSON object",
             Error::ExpectedStruct => "Expected a JSON object or an array",
@@ -775,11 +778,10 @@ impl<'de, P> Deserializer<'de, P> {
             len += 1;
         }
         match src.remainder() {
-            [] => Err(Error::UnexpectedEof),
             [c] if c.get() == QU => {
                 Ok(self.split_input(len, len + 1))
             }
-            _ => Err(Error::UnexpectedChar)
+            _ => Err(Error::UnexpectedEof)
         }
     }
 
@@ -1128,7 +1130,7 @@ impl<'de, 'a, P> de::Deserializer<'de> for &'a mut Deserializer<'de, P>
                 self.eat_some(1);
                 Ok(value)
             } else {
-                Err(Error::ExpectedObjectCommaOrEnd)
+                Err(Error::ExpectedObjectEnd)
             }
         } else {
             Err(Error::ExpectedObject)
