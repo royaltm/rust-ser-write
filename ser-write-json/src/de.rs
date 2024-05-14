@@ -1946,7 +1946,7 @@ mod tests {
     fn test_de_array() {
         assert_eq!(from_str::<[i32; 0]>("[]"), Ok(([], 2)));
         assert_eq!(from_str("[0, 1, 2]"), Ok(([0, 1, 2], 9)));
-        // errors
+        // error
         assert_eq!(from_str::<[i32; 2]>(""), Err(Error::UnexpectedEof));
         assert_eq!(from_str::<[i32; 2]>("{}"), Err(Error::ExpectedArray));
         assert_eq!(from_str::<[i32; 2]>("[0, 1,"), Err(Error::ExpectedArrayEnd));
@@ -1969,7 +1969,7 @@ mod tests {
         assert_eq!(from_str("false"), Ok((false, 5)));
         assert_eq!(from_str(" false"), Ok((false, 6)));
         assert_eq!(from_str("false "), Ok((false, 6)));
-        // errors
+        // error
         assert_eq!(from_str::<bool>(""), Err(Error::UnexpectedEof));
         assert_eq!(from_str::<bool>("true false"), Err(Error::TrailingCharacters));
         assert_eq!(from_str::<bool>("tru"), Err(Error::UnexpectedEof));
@@ -2113,7 +2113,7 @@ mod tests {
             Ok((r#"foo bar\\\\"#, 19))
         );
         assert_eq!(from_bufstr(buf, r#" "\\" "#), Ok((r#"\"#, 6)));
-        // errors
+        // error
         assert_eq!(from_bufstr::<&str>(buf, ""), Err(Error::UnexpectedEof));
         assert_eq!(from_bufstr::<&str>(buf, r#" "\x" "#), Err(Error::InvalidEscapeSequence));
         assert_eq!(from_bufstr::<&str>(buf, r#" "\c" "#), Err(Error::InvalidEscapeSequence));
@@ -2179,7 +2179,7 @@ mod tests {
             from_str(r#"[5,999.9]"#),
             Ok((Test {foo:5, bar: 999.9}, 9))
         );
-        // errors
+        // error
         assert_eq!(from_str::<Test>(""), Err(Error::UnexpectedEof));
         assert_eq!(from_str::<Test>(r#""""#), Err(Error::ExpectedStruct));
         assert_eq!(from_str::<Test>(r#"{"foo":0]"#), Err(Error::ExpectedObjectCommaOrEnd));
@@ -2538,7 +2538,7 @@ mod tests {
                 r#"{ "source": { "station": "dock", "sensors": ["\\", "\"", "x\\\"y\\"] }, "temperature":20}"#
             ),
             Ok((Temperature { temperature: 20 }, 89)));
-        // errors
+        // error
         assert_eq!(
             from_str::<Temperature>(r#"{ "temperature": 20, "invalid": this-is-not-ignored }"#),
             Err(Error::ExpectedToken));
@@ -2564,6 +2564,7 @@ mod tests {
             from_str::<Temperature>(r#"{"temperature":20,"#),
             Err(Error::UnexpectedEof));
     }
+
     #[test]
     fn test_de_map_err() {
         use core::marker::PhantomData;
@@ -2626,7 +2627,7 @@ mod tests {
                 assert_eq!(
                     from_bufstr(buf, &s),
                     Ok((amap, s.len())));
-                // errors
+                // error
                 assert_eq!(
                     from_bufstr::<BTreeMap::<$ty,&str>>(buf, r#"{"0"#),
                     Err(Error::UnexpectedEof));
@@ -2698,7 +2699,7 @@ mod tests {
         assert_eq!(
             from_bufstr(buf, r#"{"true":1,"false":0}"#),
             Ok((amap.clone(), 20)));
-        // errors
+        // error
         assert_eq!(
             from_bufstr::<BTreeMap::<CKey,i8>>(buf, r#"{"Baz":0}"#),
             Err(Error::DeserializeError("unknown variant `Baz`, expected `Foo` or `Bar`".to_string())));
@@ -2882,7 +2883,7 @@ mod tests {
         assert_eq!(
             from_bufstr(&mut buf, input),
             Ok((Thing::Map{a:126,b:"zyx"}, input.len())));
-        // errors
+        // error
         assert_eq!(from_bufstr::<Thing>(&mut buf, ""), Err(Error::UnexpectedEof));
         assert_eq!(from_bufstr::<Thing>(&mut buf, "x"), Err(Error::UnexpectedChar));
         assert_eq!(from_bufstr::<Thing>(&mut buf, "-"), Err(Error::InvalidNumber));

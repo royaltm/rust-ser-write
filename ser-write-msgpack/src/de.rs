@@ -910,9 +910,9 @@ impl<'a, 'de> de::VariantAccess<'de> for VariantAccess<'a, 'de> {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "std")]
-    use std::{vec, vec::Vec, collections::BTreeMap};
+    use std::{vec, vec::Vec, collections::BTreeMap, format};
     #[cfg(all(feature = "alloc",not(feature = "std")))]
-    use alloc::{vec, vec::Vec, collections::BTreeMap};
+    use alloc::{vec, vec::Vec, collections::BTreeMap, format};
     use serde::Deserialize;
     use super::*;
 
@@ -923,6 +923,22 @@ mod tests {
         compact: bool,
         schema: u32,
         unit: Unit
+    }
+
+    #[test]
+    fn test_deserializer() {
+        let input = [0xC0];
+        let mut de = Deserializer::from_slice(&input);
+        assert_eq!(serde::de::Deserializer::is_human_readable(&(&mut de)), false);
+        assert_eq!(de.input_ref().unwrap(), &[0xC0]);
+        assert_eq!(de.fetch().unwrap(), 0xC0);
+        assert_eq!(de.input_ref().unwrap(), &[]);
+        assert_eq!(de.split_input(2), Err(Error::UnexpectedEof));
+        de.eat_some(1);
+        assert_eq!(de.peek(), Err(Error::UnexpectedEof));
+        assert_eq!(de.fetch(), Err(Error::UnexpectedEof));
+        assert_eq!(de.input_ref(), Err(Error::UnexpectedEof));
+        assert_eq!(de.split_input(1), Err(Error::UnexpectedEof));
     }
 
     #[test]
@@ -955,12 +971,6 @@ mod tests {
         assert_eq!(from_slice(&[0xDC, 0, 3, 0, 1, 2]), Ok(([0, 1, 2], 6)));
         assert_eq!(from_slice(&[0xDD, 0, 0, 0, 3, 0, 1, 2]), Ok(([0, 1, 2], 8)));
 
-        // errors
-        assert_eq!(from_slice::<[i32; 2]>(&[0x80]), Err(Error::ExpectedArray));
-        assert_eq!(from_slice::<[i32; 2]>(&[0x91]), Err(Error::UnexpectedEof));
-        assert_eq!(from_slice::<[i32; 2]>(&[0x92,0x00]), Err(Error::UnexpectedEof));
-        assert_eq!(from_slice::<[i32; 2]>(&[0x92,0xC0]), Err(Error::ExpectedInteger));
-
         #[cfg(any(feature = "std", feature = "alloc"))]
         {
             let mut vec = vec![0xDC, 0xFF, 0xFF];
@@ -985,13 +995,26 @@ mod tests {
                 assert_eq!(res[i], false);
             }
         }
+
+        // error
+        assert_eq!(from_slice::<[i32; 2]>(&[0x80]), Err(Error::ExpectedArray));
+        assert_eq!(from_slice::<[i32; 2]>(&[]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<[i32; 2]>(&[0x91]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<[i32; 2]>(&[0x92,0x00]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<[i32; 2]>(&[0x92,0xC0]), Err(Error::ExpectedInteger));
+        assert_eq!(from_slice::<[i32; 2]>(&[0xDC]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<[i32; 2]>(&[0xDC,0x00,0x01]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<[i32; 2]>(&[0xDD]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<[i32; 2]>(&[0xDD,0x00,0x00,0x00,0x01]), Err(Error::UnexpectedEof));
     }
 
     #[test]
     fn test_de_bool() {
         assert_eq!(from_slice(&[0xC2]), Ok((false, 1)));
         assert_eq!(from_slice(&[0xC3]), Ok((true, 1)));
-        // errors
+        // error
+        assert_eq!(from_slice::<bool>(&[]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<bool>(&[0xC1]), Err(Error::InvalidType));
         assert_eq!(from_slice::<bool>(&[0xC0]), Err(Error::InvalidType));
     }
 
@@ -1032,8 +1055,20 @@ mod tests {
         let (f, len) = from_slice::<f64>(&[0xC0]).unwrap();
         assert_eq!(len, 1);
         assert!(f.is_nan());
-        assert!(from_slice::<f32>(&[0xc1]).is_err());
-        assert!(from_slice::<f64>(&[0x90]).is_err());
+        // error
+        assert_eq!(from_slice::<f32>(&[0xc1]), Err(Error::ExpectedNumber));
+        assert_eq!(from_slice::<f64>(&[0x90]), Err(Error::ExpectedNumber));
+        assert_eq!(from_slice::<f32>(&[]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<f64>(&[]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<f32>(&[0xCA, 0]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<f64>(&[0xCB, 0]), Err(Error::UnexpectedEof));
+        for code in [0xCA, 0xCB, 
+                     0xCC, 0xCD, 0xCE, 0xCF,
+                     0xD0, 0xD1, 0xD2, 0xD3]
+        {
+            assert_eq!(from_slice::<f32>(&[code]), Err(Error::UnexpectedEof));
+            assert_eq!(from_slice::<f64>(&[code]), Err(Error::UnexpectedEof));
+        }
     }
 
     #[test]
@@ -1050,7 +1085,7 @@ mod tests {
                 assert_eq!(from_slice::<$ty>(&[0xD1, 0xff, 0xff]), Ok((-1, 3)));
                 assert_eq!(from_slice::<$ty>(&[0xD2, 0xff, 0xff, 0xff, 0xff]), Ok((-1, 5)));
                 assert_eq!(from_slice::<$ty>(&[0xD3, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), Ok((-1, 9)));
-                assert_eq!(from_slice::<$ty>(&[0xC0]), Err(Error::ExpectedInteger));
+
             )*};
         }
         macro_rules! test_unsigned {
@@ -1069,11 +1104,57 @@ mod tests {
                 assert_eq!(from_slice::<$ty>(&[0xD2, 0xff, 0xff, 0xff, 0xff]), Err(Error::InvalidInteger));
                 assert_eq!(from_slice::<$ty>(&[0xD3, 0, 0, 0, 0, 0, 0, 0, 1]), Ok((1, 9)));
                 assert_eq!(from_slice::<$ty>(&[0xD3, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), Err(Error::InvalidInteger));
+            )*};
+        }
+        macro_rules! test_int_err {
+            ($($ty:ty),*) => {$(
                 assert_eq!(from_slice::<$ty>(&[0xC0]), Err(Error::ExpectedInteger));
+                assert_eq!(from_slice::<$ty>(&[0xCC]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xCD]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xCE]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xCF]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xCD, 0]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xCE, 0]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xCF, 0]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xD0]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xD1]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xD2]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xD3]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xD1, 0]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xD2, 0]), Err(Error::UnexpectedEof));
+                assert_eq!(from_slice::<$ty>(&[0xD3, 0]), Err(Error::UnexpectedEof));
             )*};
         }
         test_integer!(i8,i16,i32,i64);
         test_unsigned!(u8,u16,u32,u64);
+        test_int_err!(i8,i16,i32,i64, u8,u16,u32,u64);
+        assert_eq!(from_slice::<i8>(&[0xCC, 0x80]), Err(Error::InvalidInteger));
+        assert_eq!(from_slice::<i16>(&[0xCD, 0x80, 0x00]), Err(Error::InvalidInteger));
+        assert_eq!(from_slice::<i32>(&[0xCE, 0x80, 0x00, 0x00, 0x00]), Err(Error::InvalidInteger));
+        assert_eq!(from_slice::<i64>(&[0xCF, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), Err(Error::InvalidInteger));
+    }
+
+    #[test]
+    fn test_de_char() {
+        assert_eq!(from_slice::<char>(&[0xA4,0xf0,0x9f,0x91,0x8f]), Ok(('👏', 5)));
+        assert_eq!(from_slice::<char>(&[0xD9,4,0xf0,0x9f,0x91,0x8f]), Ok(('👏', 6)));
+        assert_eq!(from_slice::<char>(&[0xDA,0,4,0xf0,0x9f,0x91,0x8f]), Ok(('👏', 7)));
+        assert_eq!(from_slice::<char>(&[0xDB,0,0,0,4,0xf0,0x9f,0x91,0x8f]), Ok(('👏', 9)));
+        assert_eq!(from_slice::<char>(b""), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<char>(b"\xC0"), Err(Error::ExpectedString));
+        assert_eq!(from_slice::<char>(b"\xA0"), Err(Error::InvalidLength));
+        assert_eq!(from_slice::<char>(b"\xA2ab"), Err(Error::InvalidLength));
+        assert_eq!(from_slice::<char>(b"\xA1"), Err(Error::UnexpectedEof));
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn test_de_string() {
+        assert_eq!(from_slice::<String>(&[0xA0]), Ok(("".to_string(), 1)));
+        assert_eq!(from_slice::<String>(&[0xD9,0]), Ok(("".to_string(), 2)));
+        assert_eq!(from_slice::<String>(&[0xDA,0,0]), Ok(("".to_string(), 3)));
+        assert_eq!(from_slice::<String>(&[0xDB,0,0,0,0]), Ok(("".to_string(), 5)));
+        assert_eq!(from_slice::<String>(&[0xA1]), Err(Error::UnexpectedEof));
     }
 
     #[test]
@@ -1093,8 +1174,18 @@ mod tests {
         input[..2].copy_from_slice(&[0xd9, text.len() as u8]);
         input[2..].copy_from_slice(text.as_bytes());
         assert_eq!(from_slice(&input), Ok((text, 50)));
-        // errors
+        // error
         assert_eq!(from_slice::<&str>(&[0xC4]), Err(Error::ExpectedString));
+        assert_eq!(from_slice::<&str>(b"\xA2\xff\xfe"), Err(Error::InvalidUnicodeCodePoint));
+        assert_eq!(from_slice::<&str>(&[]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&str>(&[0xA1]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&str>(&[0xA2, 0]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&str>(&[0xD9]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&str>(&[0xD9, 1]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&str>(&[0xDA, 0]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&str>(&[0xDA, 0, 1]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&str>(&[0xDB, 0, 0, 0]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&str>(&[0xDB, 0, 0, 0, 1]), Err(Error::UnexpectedEof));
     }
 
     #[test]
@@ -1105,7 +1196,37 @@ mod tests {
         assert_eq!(from_slice::<&[u8]>(&[0xC4,1,0xff]), Ok((&[0xff][..], 3)));
         assert_eq!(from_slice::<&[u8]>(&[0xC5,0,1,0xff]), Ok((&[0xff][..], 4)));
         assert_eq!(from_slice::<&[u8]>(&[0xC6,0,0,0,1,0xff]), Ok((&[0xff][..], 6)));
+        // error
         assert_eq!(from_slice::<&[u8]>(&[0xA0]), Err(Error::ExpectedBin));
+        assert_eq!(from_slice::<&[u8]>(&[]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&[u8]>(&[0xC4]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&[u8]>(&[0xC4, 1]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&[u8]>(&[0xC5, 0]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&[u8]>(&[0xC5, 0, 1]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&[u8]>(&[0xC6, 0, 0, 0]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<&[u8]>(&[0xC6, 0, 0, 0, 1]), Err(Error::UnexpectedEof));
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn test_de_bytes_own() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Bytes(#[serde(with = "serde_bytes")] Vec<u8>);
+        assert_eq!(from_slice::<Bytes>(&[0xC4,0]), Ok((Bytes(Vec::new()), 2)));
+        assert_eq!(from_slice::<Bytes>(&[0xC5,0,0]), Ok((Bytes(Vec::new()), 3)));
+        assert_eq!(from_slice::<Bytes>(&[0xC6,0,0,0,0]), Ok((Bytes(Vec::new()), 5)));
+        assert_eq!(from_slice::<Bytes>(&[0xC4,1,0xff]), Ok((Bytes(vec![0xff]), 3)));
+        assert_eq!(from_slice::<Bytes>(&[0xC5,0,1,0xff]), Ok((Bytes(vec![0xff]), 4)));
+        assert_eq!(from_slice::<Bytes>(&[0xC6,0,0,0,1,0xff]), Ok((Bytes(vec![0xff]), 6)));
+        // error
+        assert_eq!(from_slice::<Bytes>(&[0xA0]), Err(Error::ExpectedBin));
+        assert_eq!(from_slice::<Bytes>(&[]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Bytes>(&[0xC4]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Bytes>(&[0xC4, 1]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Bytes>(&[0xC5, 0]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Bytes>(&[0xC5, 0, 1]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Bytes>(&[0xC6, 0, 0, 0]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Bytes>(&[0xC6, 0, 0, 0, 1]), Err(Error::UnexpectedEof));
     }
 
     #[derive(Debug, Deserialize, PartialEq)]
@@ -1127,7 +1248,7 @@ mod tests {
         assert_eq!(from_slice(b"\x00"), Ok((Type::Boolean, 1)));
         assert_eq!(from_slice(b"\x01"), Ok((Type::Number, 1)));
         assert_eq!(from_slice(b"\x02"), Ok((Type::Thing, 1)));
-
+        // error
         #[cfg(any(feature = "std", feature = "alloc"))]
         assert_eq!(from_slice::<Type>(b"\xA0"), Err(Error::DeserializeError(
             r#"unknown variant ``, expected one of `boolean`, `number`, `thing`"#.into())));
@@ -1148,6 +1269,10 @@ mod tests {
         assert_eq!(from_slice::<Type>(&[0xC0]), Err(Error::ExpectedIdentifier));
         assert_eq!(from_slice::<Type>(&[0x80]), Err(Error::ExpectedIdentifier));
         assert_eq!(from_slice::<Type>(&[0x90]), Err(Error::ExpectedIdentifier));
+        assert_eq!(from_slice::<Type>(b""), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Type>(b"\x81\xA7boolean\xC0"), Err(Error::InvalidType));
+        assert_eq!(from_slice::<Type>(b"\x81\xA7boolean\x90"), Err(Error::InvalidType));
+        assert_eq!(from_slice::<Type>(b"\x81\xA7boolean\x80"), Err(Error::InvalidType));
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
@@ -1223,9 +1348,54 @@ mod tests {
             assert!(map[&i]);
         }
 
-        // errors
-        assert_eq!(from_slice::<BTreeMap<i32,bool>>(&[0x81]),
-                   Err(Error::UnexpectedEof));
+        // error
+        assert_eq!(from_slice::<BTreeMap<i32,bool>>(&[0x90]), Err(Error::ExpectedMap));
+        assert_eq!(from_slice::<BTreeMap<i32,bool>>(&[]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<BTreeMap<i32,bool>>(&[0x81]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<BTreeMap<i32,bool>>(&[0x81,0x00]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<BTreeMap<i32,bool>>(&[0x82,0x00,0xC2]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<BTreeMap<i32,bool>>(&[0xDE]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<BTreeMap<i32,bool>>(&[0xDE,0x00,0x01]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<BTreeMap<i32,bool>>(&[0xDF]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<BTreeMap<i32,bool>>(&[0xDF,0x00,0x00,0x00,0x01]), Err(Error::UnexpectedEof));
+    }
+
+    #[test]
+    fn test_de_map_err() {
+        use core::marker::PhantomData;
+        use serde::de::Deserializer;
+        #[derive(Debug, PartialEq)]
+        struct PhonyMap(Option<(i32,i32)>);
+        struct PhonyMapVisitor(PhantomData<PhonyMap>);
+        impl<'de> Visitor<'de> for PhonyMapVisitor {
+            type Value = PhonyMap;
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a map")
+            }
+            fn visit_map<M: MapAccess<'de>>(self, mut access: M) -> core::result::Result<Self::Value, M::Error> {
+                if let Some((k, v)) = access.next_entry()? {
+                    return Ok(PhonyMap(Some((k,v))))
+                }
+                Ok(PhonyMap(None))
+            }
+        }
+        impl<'de> Deserialize<'de> for PhonyMap {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> core::result::Result<Self, D::Error> {
+                deserializer.deserialize_any(PhonyMapVisitor(PhantomData))
+            }
+        }
+        assert_eq!(
+            from_slice::<PhonyMap>(b"\x80"),
+            Ok((PhonyMap(None), 1)));
+        assert_eq!(
+            from_slice::<PhonyMap>(b"\x81\x00\x01"),
+            Ok((PhonyMap(Some((0,1))), 3)));
+        assert_eq!(from_slice::<PhonyMap>(b""), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<PhonyMap>(b"\x81"), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<PhonyMap>(b"\x81\x00"), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<PhonyMap>(b"\x82\x00\x01"), Err(Error::TrailingElements));
+        assert_eq!(from_slice::<PhonyMap>(b"\x82\x00\x01"), Err(Error::TrailingElements));
+        assert!(from_slice::<PhonyMap>(b"\x90").is_err());
     }
 
     #[test]
@@ -1298,6 +1468,13 @@ mod tests {
                 0xA3, b'f', b'o', b'o', 0x01]),
             Err(Error::DeserializeError)
         );
+        assert_eq!(from_slice::<Test>(b""), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Test>(b"\xC0"), Err(Error::ExpectedStruct));
+        assert_eq!(from_slice::<Test>(b"\x81"), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Test>(b"\xDC"), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Test>(b"\xDD"), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Test>(b"\xDE"), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Test>(b"\xDF"), Err(Error::UnexpectedEof));
     }
 
     #[test]
@@ -1350,7 +1527,7 @@ mod tests {
         assert_eq!(
             from_slice::<Temperature>(b"\x91\xD1\xff\x00"),
             Err(Error::InvalidInteger));
-        // errors
+        // error
         assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xCA\x00\x00\x00\x00"), Err(Error::ExpectedInteger));
         assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xC0"), Err(Error::ExpectedInteger));
         assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xC2"), Err(Error::ExpectedInteger));
@@ -1379,7 +1556,7 @@ mod tests {
         assert_eq!(
             from_slice::<Temperature>(b"\x91\xff"),
             Err(Error::InvalidInteger));
-        // errors
+        // error
         assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xCA\x00\x00\x00\x00"), Err(Error::ExpectedInteger));
         assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xC0"), Err(Error::ExpectedInteger));
         assert_eq!(from_slice::<Temperature>(b"\x81\xABtemperature\xC2"), Err(Error::ExpectedInteger));
@@ -1486,9 +1663,8 @@ mod tests {
         assert_eq!(
             from_slice(b"\x92\xC0\x00"),
             Ok((Property { description: None, value: Some(0) }, 3)));
-        assert_eq!(
-            from_slice::<Property>(b"\x91\x00"),
-            Err(Error::ExpectedString));
+        assert_eq!(from_slice::<Property>(b"\x91\x00"), Err(Error::ExpectedString));
+        assert_eq!(from_slice::<Property>(b"\x92\xA1x"), Err(Error::UnexpectedEof));
     }
 
     #[test]
@@ -1543,7 +1719,11 @@ mod tests {
         let a = A::A(54);
         assert_eq!(from_slice::<A>(&[0x81,0xA1,b'A',54]), Ok((a, 4)));
         assert_eq!(from_slice::<A>(&[0x81,0x00,54]), Ok((a, 3)));
+        // error
+        assert_eq!(from_slice::<A>(&[]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<A>(&[0x81]), Err(Error::UnexpectedEof));
         assert_eq!(from_slice::<A>(&[0x00]), Err(Error::InvalidType));
+        assert_eq!(from_slice::<A>(&[0xA1,b'A']), Err(Error::InvalidType));
     }
 
     #[test]
@@ -1560,8 +1740,29 @@ mod tests {
         assert_eq!(from_slice(&[0x81,0xA1,b'A', 0x92 ,54, 0xCD,2,208]), Ok((a, 8)));
         assert_eq!(from_slice(&[0x81,0x00, 0x92 ,54, 0xCD,2,208]), Ok((a, 7)));
         // error
+        assert_eq!(from_slice::<A>(&[]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<A>(&[0x81]), Err(Error::UnexpectedEof));
         assert_eq!(from_slice::<A>(&[0x81,0xA1,b'A', 0x93 ,54, 0xCD,2,208, 0xC0]), Err(Error::TrailingElements));
         assert_eq!(from_slice::<A>(&[0x81,0x00, 0x93 ,54, 0xCD,2,208, 0xC0]), Err(Error::TrailingElements));
+        assert_eq!(from_slice::<A>(&[0xA1,b'A']), Err(Error::InvalidType));
+    }
+
+    #[test]
+    fn test_de_tuple_variant() {
+        #[derive(Deserialize, Debug, PartialEq, Clone, Copy)]
+        enum A {
+            A(i32,u16),
+        }
+        let a = A::A(-19,10000);
+        assert_eq!(from_slice(&[0x81,0xA1,b'A', 0x92 ,0xED, 0xCD,0x27,0x10]), Ok((a, 8)));
+        assert_eq!(from_slice(&[0x81,0x00, 0x92 ,0xED, 0xCD,0x27,0x10]), Ok((a, 7)));
+        // error
+        assert_eq!(from_slice::<A>(&[]), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<A>(&[0xA1,b'A']), Err(Error::InvalidType));
+        assert_eq!(from_slice::<A>(&[0x81,0xA1,b'A', 0x80]), Err(Error::ExpectedArray));
+        assert_eq!(from_slice::<A>(&[0x81,0x00, 0x80]), Err(Error::ExpectedArray));
+        assert_eq!(from_slice::<A>(&[0x81,0x00, 0x93 ,0xED, 0xCD,0x27,0x10, 0xC0]), Err(Error::TrailingElements));
+        assert_eq!(from_slice::<A>(&[0x81,0xA1,b'A', 0x93 ,0xED, 0xCD,0x27,0x10, 0xC0]), Err(Error::TrailingElements));
     }
 
     #[test]
@@ -1865,10 +2066,34 @@ mod tests {
         assert_eq!(
             from_slice(input),
             Ok((Thing::Str("foo"), input.len())));
+        let input = b"\xD9\x03foo";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Str("foo"), input.len())));
+        let input = b"\xDA\x00\x03foo";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Str("foo"), input.len())));
+        let input = b"\xDB\x00\x00\x00\x03foo";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Str("foo"), input.len())));
         let input = b"\xC4\x01\x80";
         assert_eq!(
             from_slice(input),
             Ok((Thing::Bytes(b"\x80"), input.len())));
+        let input = b"\xCC\x00";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Uint(0), input.len())));
+        let input = b"\xCD\x00\x00";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Uint(0), input.len())));
+        let input = b"\xCE\x00\x00\x00\x00";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Uint(0), input.len())));
         let input = b"\xCF\x00\x00\x00\x00\x00\x00\x00\x00";
         assert_eq!(
             from_slice(input),
@@ -1881,6 +2106,18 @@ mod tests {
         assert_eq!(
             from_slice(input),
             Ok((Thing::Uint(0), input.len())));
+        let input = b"\xD0\xFF";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Int(-1), input.len())));
+        let input = b"\xD1\xFF\xFF";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Int(-1), input.len())));
+        let input = b"\xD2\xFF\xFF\xFF\xFF";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Int(-1), input.len())));
         let input = b"\xD3\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF";
         assert_eq!(
             from_slice(input),
@@ -1905,9 +2142,142 @@ mod tests {
         assert_eq!(
             from_slice(input),
             Ok((Thing::Array(["xy","abc"]), input.len())));
+        let input = b"\xDC\x00\x02\xA2xy\xA3abc";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Array(["xy","abc"]), input.len())));
+        let input = b"\xDD\x00\x00\x00\x02\xA2xy\xA3abc";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Array(["xy","abc"]), input.len())));
         let input = b"\x82\xA1a\x7e\xA1b\xA3zyx";
         assert_eq!(
             from_slice(input),
             Ok((Thing::Map{a:126,b:"zyx"}, input.len())));
+        let input = b"\xDE\x00\x02\xA1a\x7e\xA1b\xA3zyx";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Map{a:126,b:"zyx"}, input.len())));
+        let input = b"\xDF\x00\x00\x00\x02\xA1a\x7e\xA1b\xA3zyx";
+        assert_eq!(
+            from_slice(input),
+            Ok((Thing::Map{a:126,b:"zyx"}, input.len())));
+        // error
+        assert_eq!(from_slice::<Thing>(b""), Err(Error::UnexpectedEof));
+        assert_eq!(from_slice::<Thing>(b"\xC1"), Err(Error::ReservedCode));
+        assert_eq!(from_slice::<Thing>(b"\xC7"), Err(Error::UnsupportedExt));
+        assert_eq!(from_slice::<Thing>(b"\xC8"), Err(Error::UnsupportedExt));
+        assert_eq!(from_slice::<Thing>(b"\xC9"), Err(Error::UnsupportedExt));
+        assert_eq!(from_slice::<Thing>(b"\xD4"), Err(Error::UnsupportedExt));
+        assert_eq!(from_slice::<Thing>(b"\xD5"), Err(Error::UnsupportedExt));
+        assert_eq!(from_slice::<Thing>(b"\xD6"), Err(Error::UnsupportedExt));
+        assert_eq!(from_slice::<Thing>(b"\xD7"), Err(Error::UnsupportedExt));
+        assert_eq!(from_slice::<Thing>(b"\xD8"), Err(Error::UnsupportedExt));
+    }
+
+    #[test]
+    fn test_de_ignore_err() {
+        assert_eq!(Deserializer::from_slice(b"").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\x81").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\x81\xC0").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\x91").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xA1").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC4").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC4\x01").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC5\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC5\x00\x01").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC6\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC6\x00\x00\x00\x01").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC7").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC7\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC7\x01\x7f").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC8").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC8\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC8\x00\x01\x7f").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC9").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC9\x00\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xC9\x00\x00\x00\x01\x7f").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xCA").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xCA\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xCB").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xCB\x00\x00\x00\x00\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xCC").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xCD\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xCE\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xCF\x00\x00\x00\x00\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD0").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD1\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD2\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD3\x00\x00\x00\x00\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD4").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD4\x7f").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD5").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD5\x7f").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD5\x7f\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD6").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD6\x7f").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD6\x7f\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD7").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD7\x7f").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD7\x7f\x00\x00\x00\x00\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD8").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD8\x7f").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD8\x7f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD9").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xD9\x01").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDA\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDA\x00\x01").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDB\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDB\x00\x00\x00\x01").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDC").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDC\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDC\x00\x01").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDD").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDD\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDD\x00\x00\x00\x01").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDE").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDE\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDE\x00\x01").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDE\x00\x01\xC0").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDF").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDF\x00\x00\x00").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDF\x00\x00\x00\x01").eat_message(), Err(Error::UnexpectedEof));
+        assert_eq!(Deserializer::from_slice(b"\xDF\x00\x00\x00\x01\xC0").eat_message(), Err(Error::UnexpectedEof));
+    }
+
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn test_de_error_string() {
+        assert_eq!(&format!("{}", Error::UnexpectedEof), "Unexpected end of MessagePack input");
+        assert_eq!(&format!("{}", Error::ReservedCode), "Reserved MessagePack code in input");
+        assert_eq!(&format!("{}", Error::UnsupportedExt), "Unsupported MessagePack extension code in input");
+        assert_eq!(&format!("{}", Error::InvalidInteger), "Could not coerce integer to a deserialized type");
+        assert_eq!(&format!("{}", Error::InvalidType), "Invalid type");
+        assert_eq!(&format!("{}", Error::InvalidUnicodeCodePoint), "Invalid unicode code point");
+        assert_eq!(&format!("{}", Error::ExpectedInteger), "Expected MessagePack integer");
+        assert_eq!(&format!("{}", Error::ExpectedNumber), "Expected MessagePack number");
+        assert_eq!(&format!("{}", Error::ExpectedString), "Expected MessagePack string");
+        assert_eq!(&format!("{}", Error::ExpectedBin), "Expected MessagePack bin");
+        assert_eq!(&format!("{}", Error::ExpectedNil), "Expected MessagePack nil");
+        assert_eq!(&format!("{}", Error::ExpectedArray), "Expected MessagePack array");
+        assert_eq!(&format!("{}", Error::ExpectedMap), "Expected MessagePack map");
+        assert_eq!(&format!("{}", Error::ExpectedStruct), "Expected MessagePack map or array");
+        assert_eq!(&format!("{}", Error::ExpectedIdentifier), "Expected a struct field or enum variant identifier");
+        assert_eq!(&format!("{}", Error::TrailingElements), "Too many elements for a deserialized type");
+        assert_eq!(&format!("{}", Error::InvalidLength), "Invalid length");
+        let custom: Error = serde::de::Error::custom("xxx");
+        assert_eq!(format!("{}", custom), "xxx while deserializing MessagePack");
+    }
+
+    #[cfg(not(any(feature = "std", feature = "alloc")))]
+    #[test]
+    fn test_de_error_fmt() {
+        use crate::ser_write::SliceWriter;
+        use core::fmt::Write;
+        let mut buf = [0u8;59];
+        let mut writer = SliceWriter::new(&mut buf);
+        let custom: Error = serde::de::Error::custom("xxx");
+        write!(writer, "{}", custom).unwrap();
+        assert_eq!(writer.as_ref(), "MessagePack does not match deserializer’s expected format".as_bytes());
     }
 }

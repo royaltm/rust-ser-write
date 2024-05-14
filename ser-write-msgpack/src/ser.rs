@@ -966,9 +966,9 @@ impl<'a, S, E> ser::SerializeStructVariant for SerializeStructStrMap<'a, S>
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "std")]
-    use std::{vec, vec::Vec, collections::BTreeMap};
+    use std::{vec, vec::Vec, collections::BTreeMap, format};
     #[cfg(all(feature = "alloc",not(feature = "std")))]
-    use alloc::{vec, vec::Vec, collections::BTreeMap};
+    use alloc::{vec, vec::Vec, collections::BTreeMap, format};
     use super::*;
     use ser_write::{SliceWriter, SerError};
 
@@ -994,6 +994,25 @@ mod tests {
         let mut writer = SliceWriter::new(buf);
         to_writer_named(&mut writer, value)?;
         Ok(writer.split().0)
+    }
+
+    #[test]
+    fn test_msgpack_serializer() {
+        macro_rules! test_serializer {
+            ($ser:ty) => {
+                let mut buf = [0u8;2];
+                let writer = SliceWriter::new(&mut buf);
+                let mut ser = <$ser>::new(writer);
+                assert_eq!(ser::Serializer::is_human_readable(&(&mut ser)), false);
+                assert_eq!(ser.writer().write_byte(0), Ok(()));
+                let mut writer: SliceWriter = ser.into_inner();
+                assert_eq!(writer.write_byte(1), Ok(()));
+                assert_eq!(buf, [0, 1]);
+            };
+        }
+        test_serializer!(CompactSerializer<SliceWriter>);
+        test_serializer!(StructMapStrSerializer<SliceWriter>);
+        test_serializer!(StructMapIdxSerializer<SliceWriter>);
     }
 
     #[test]
@@ -1051,71 +1070,78 @@ mod tests {
         assert_eq!(to_slice_compact(&mut buf, &test).unwrap(), expected);
     }
 
-    macro_rules! test_msgpack_fixint {
-        ($ty:ty, $buf:ident) => {
-            let int: $ty = 0;
-            let expected = b"\x00";
-            assert_eq!(to_slice(&mut $buf, &int).unwrap(), expected);
-            assert_eq!(to_slice_named(&mut $buf, &int).unwrap(), expected);
-            assert_eq!(to_slice_compact(&mut $buf, &int).unwrap(), expected);
-            let int: $ty = 127;
-            let expected = b"\x7f";
-            assert_eq!(to_slice(&mut $buf, &int).unwrap(), expected);
-            assert_eq!(to_slice_named(&mut $buf, &int).unwrap(), expected);
-            assert_eq!(to_slice_compact(&mut $buf, &int).unwrap(), expected);
-        };
-        (- $ty:ty, $buf:ident) => {
-            let int: $ty = -1;
-            let expected = b"\xff";
-            assert_eq!(to_slice(&mut $buf, &int).unwrap(), expected);
-            assert_eq!(to_slice_named(&mut $buf, &int).unwrap(), expected);
-            assert_eq!(to_slice_compact(&mut $buf, &int).unwrap(), expected);
-            let int: $ty = -32;
-            let expected = b"\xe0";
-            assert_eq!(to_slice(&mut $buf, &int).unwrap(), expected);
-            assert_eq!(to_slice_named(&mut $buf, &int).unwrap(), expected);
-            assert_eq!(to_slice_compact(&mut $buf, &int).unwrap(), expected);
-        };
-    }
-
-    macro_rules! test_msgpack_int {
-        ($ty:ty, $buf:ident, $(($val:expr)=$exp:literal),*) => {$(
-            let int: $ty = $val;
-            let expected = $exp;
-            assert_eq!(to_slice(&mut $buf, &int).unwrap(), expected);
-            assert_eq!(to_slice_named(&mut $buf, &int).unwrap(), expected);
-            assert_eq!(to_slice_compact(&mut $buf, &int).unwrap(), expected);
-        )*};
-    }
-
     #[test]
     fn test_msgpack_ints() {
         let mut buf = [0u8;9];
-        test_msgpack_fixint!(i8, buf);
-        test_msgpack_fixint!(u8, buf);
-        test_msgpack_fixint!(- i8, buf);
-        test_msgpack_fixint!(u16, buf);
-        test_msgpack_fixint!(i16, buf);
-        test_msgpack_fixint!(- i16, buf);
-        test_msgpack_fixint!(u32, buf);
-        test_msgpack_fixint!(i32, buf);
-        test_msgpack_fixint!(- i32, buf);
-        test_msgpack_fixint!(u64, buf);
-        test_msgpack_fixint!(- i64, buf);
+        macro_rules! test_msgpack_fixint {
+            ($ty:ty) => {
+                let int: $ty = 0;
+                let expected = b"\x00";
+                assert_eq!(to_slice(&mut buf, &int).unwrap(), expected);
+                assert_eq!(to_slice_named(&mut buf, &int).unwrap(), expected);
+                assert_eq!(to_slice_compact(&mut buf, &int).unwrap(), expected);
+                let int: $ty = 127;
+                let expected = b"\x7f";
+                assert_eq!(to_slice(&mut buf, &int).unwrap(), expected);
+                assert_eq!(to_slice_named(&mut buf, &int).unwrap(), expected);
+                assert_eq!(to_slice_compact(&mut buf, &int).unwrap(), expected);
+                assert_eq!(to_slice_compact(&mut buf[..0], &int), Err(Error::Writer(SerError::BufferFull)));
+                assert_eq!(to_slice(&mut buf[..0], &int), Err(Error::Writer(SerError::BufferFull)));
+                assert_eq!(to_slice_named(&mut buf[..0], &int), Err(Error::Writer(SerError::BufferFull)));
+            };
+            (- $ty:ty) => {
+                let int: $ty = -1;
+                let expected = b"\xff";
+                assert_eq!(to_slice(&mut buf, &int).unwrap(), expected);
+                assert_eq!(to_slice_named(&mut buf, &int).unwrap(), expected);
+                assert_eq!(to_slice_compact(&mut buf, &int).unwrap(), expected);
+                let int: $ty = -32;
+                let expected = b"\xe0";
+                assert_eq!(to_slice(&mut buf, &int).unwrap(), expected);
+                assert_eq!(to_slice_named(&mut buf, &int).unwrap(), expected);
+                assert_eq!(to_slice_compact(&mut buf, &int).unwrap(), expected);
+            };
+        }
+        macro_rules! test_msgpack_int {
+            ($ty:ty, $(($val:expr)=$exp:literal),*) => {$(
+                let int: $ty = $val;
+                let expected = $exp;
+                assert_eq!(to_slice(&mut buf, &int).unwrap(), expected);
+                assert_eq!(to_slice_named(&mut buf, &int).unwrap(), expected);
+                assert_eq!(to_slice_compact(&mut buf, &int).unwrap(), expected);
+                for len in 0..expected.len() {
+                    assert_eq!(to_slice_compact(&mut buf[..len], &int), Err(Error::Writer(SerError::BufferFull)));
+                    assert_eq!(to_slice(&mut buf[..len], &int), Err(Error::Writer(SerError::BufferFull)));
+                    assert_eq!(to_slice_named(&mut buf[..len], &int), Err(Error::Writer(SerError::BufferFull)));
+                }
+            )*};
+        }
+        test_msgpack_fixint!(u8);
+        test_msgpack_fixint!(i8);
+        test_msgpack_fixint!(- i8);
+        test_msgpack_fixint!(u16);
+        test_msgpack_fixint!(i16);
+        test_msgpack_fixint!(- i16);
+        test_msgpack_fixint!(u32);
+        test_msgpack_fixint!(i32);
+        test_msgpack_fixint!(- i32);
+        test_msgpack_fixint!(u64);
+        test_msgpack_fixint!(i64);
+        test_msgpack_fixint!(- i64);
 
-        test_msgpack_int!(i8, buf, (-33)=b"\xD0\xdf", (-128)=b"\xD0\x80");
-        test_msgpack_int!(u8, buf, (128)=b"\xCC\x80", ( 255)=b"\xCC\xff");
-        test_msgpack_int!(i16, buf, 
+        test_msgpack_int!(i8, (-33)=b"\xD0\xdf", (-128)=b"\xD0\x80");
+        test_msgpack_int!(u8, (128)=b"\xCC\x80", ( 255)=b"\xCC\xff");
+        test_msgpack_int!(i16, 
             (-33)=b"\xD0\xdf", (-128)=b"\xD0\x80",
             (128)=b"\xCC\x80", ( 255)=b"\xCC\xff",
             (256)=b"\xD1\x01\x00",
             (i16::MAX)=b"\xD1\x7f\xff",
             (i16::MIN)=b"\xD1\x80\x00");
-        test_msgpack_int!(u16, buf, 
+        test_msgpack_int!(u16, 
             (128)=b"\xCC\x80", ( 255)=b"\xCC\xff",
             (256)=b"\xCD\x01\x00",
             (u16::MAX)=b"\xCD\xff\xff");
-        test_msgpack_int!(i32, buf,
+        test_msgpack_int!(i32,
             (-33)=b"\xD0\xdf", (-128)=b"\xD0\x80",
             (128)=b"\xCC\x80", ( 255)=b"\xCC\xff",
             (256)=b"\xD1\x01\x00",
@@ -1124,12 +1150,12 @@ mod tests {
             (u16::MAX.into())=b"\xCD\xff\xff",
             (i32::MAX.into())=b"\xD2\x7f\xff\xff\xff",
             (i32::MIN.into())=b"\xD2\x80\x00\x00\x00");
-        test_msgpack_int!(u32, buf, 
+        test_msgpack_int!(u32, 
             (128)=b"\xCC\x80", ( 255)=b"\xCC\xff",
             (256)=b"\xCD\x01\x00",
             (u16::MAX.into())=b"\xCD\xff\xff",
             (u32::MAX)=b"\xCE\xff\xff\xff\xff");
-        test_msgpack_int!(i64, buf,
+        test_msgpack_int!(i64,
             (-33)=b"\xD0\xdf", (-128)=b"\xD0\x80",
             (128)=b"\xCC\x80", ( 255)=b"\xCC\xff",
             (256)=b"\xD1\x01\x00",
@@ -1141,7 +1167,7 @@ mod tests {
             (u32::MAX.into())=b"\xCE\xff\xff\xff\xff",
             (i64::MAX.into())=b"\xD3\x7f\xff\xff\xff\xff\xff\xff\xff",
             (i64::MIN.into())=b"\xD3\x80\x00\x00\x00\x00\x00\x00\x00");
-        test_msgpack_int!(u64, buf, 
+        test_msgpack_int!(u64, 
             (128)=b"\xCC\x80", ( 255)=b"\xCC\xff",
             (256)=b"\xCD\x01\x00",
             (u16::MAX.into())=b"\xCD\xff\xff",
@@ -1157,11 +1183,21 @@ mod tests {
         assert_eq!(to_slice(&mut buf, &flt).unwrap(), expected);
         assert_eq!(to_slice_named(&mut buf, &flt).unwrap(), expected);
         assert_eq!(to_slice_compact(&mut buf, &flt).unwrap(), expected);
+        for len in 0..expected.len() {
+            assert_eq!(to_slice_compact(&mut buf[..len], &flt), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice(&mut buf[..len], &flt), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice_named(&mut buf[..len], &flt), Err(Error::Writer(SerError::BufferFull)));
+        }
         let flt = 0.0f64;
         let expected = b"\xCB\x00\x00\x00\x00\x00\x00\x00\x00";
         assert_eq!(to_slice(&mut buf, &flt).unwrap(), expected);
         assert_eq!(to_slice_named(&mut buf, &flt).unwrap(), expected);
         assert_eq!(to_slice_compact(&mut buf, &flt).unwrap(), expected);
+        for len in 0..expected.len() {
+            assert_eq!(to_slice_compact(&mut buf[..len], &flt), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice(&mut buf[..len], &flt), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice_named(&mut buf[..len], &flt), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
@@ -1172,6 +1208,7 @@ mod tests {
             #[serde(with = "serde_bytes")]
             key: Vec<u8>
         }
+        // BIN-16
         let vec = vec![169u8;65535];
         let value = [Test { key: vec }];
         let res = to_vec_named(&value).unwrap();
@@ -1192,6 +1229,40 @@ mod tests {
         for i in 0..65535 {
             assert_eq!(res[i+5], 169);
         }
+        let mut buf = [0u8;15];
+        // errors
+        for len in 0..buf.len() {
+            assert_eq!(to_slice_compact(&mut buf[..len], &value), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice(&mut buf[..len], &value), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice_named(&mut buf[..len], &value), Err(Error::Writer(SerError::BufferFull)));
+        }
+        // BIN-32
+        let vec = vec![77u8;65536];
+        let value = [Test { key: vec }];
+        let res = to_vec_named(&value).unwrap();
+        assert_eq!(res.len(), 11+65536);
+        assert!(res.starts_with(b"\x91\x81\xA3key\xC6\x00\x01\x00\x00"));
+        for i in 0..65536 {
+            assert_eq!(res[i+11], 77);
+        }
+        let res = to_vec(&value).unwrap();
+        assert_eq!(res.len(), 8+65536);
+        assert!(res.starts_with(b"\x91\x81\x00\xC6\x00\x01\x00\x00"));
+        for i in 0..65536 {
+            assert_eq!(res[i+8], 77);
+        }
+        let res = to_vec_compact(&value).unwrap();
+        assert_eq!(res.len(), 7+65536);
+        assert!(res.starts_with(b"\x91\x91\xC6\x00\x01\x00\x00"));
+        for i in 0..65536 {
+            assert_eq!(res[i+7], 77);
+        }
+        // errors
+        for len in 0..buf.len() {
+            assert_eq!(to_slice_compact(&mut buf[..len], &value), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice(&mut buf[..len], &value), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice_named(&mut buf[..len], &value), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1201,20 +1272,30 @@ mod tests {
             #[serde(with = "serde_bytes")]
             key: &'a[u8]
         }
-        let mut buf = [0u8;73];
+        let mut buf = [0u8;17];
         let value = [Test { key: b"\xc1\x00\x00bytes\xff" }];
-        assert_eq!(to_slice_named(&mut buf, &value).unwrap(),
-            b"\x91\x81\xA3key\xC4\x09\xc1\x00\x00bytes\xff");
-        assert_eq!(to_slice(&mut buf, &value).unwrap(),
-            b"\x91\x81\x00\xC4\x09\xc1\x00\x00bytes\xff");
         assert_eq!(to_slice_compact(&mut buf, &value).unwrap(),
             b"\x91\x91\xC4\x09\xc1\x00\x00bytes\xff");
+        assert_eq!(to_slice(&mut buf, &value).unwrap(),
+            b"\x91\x81\x00\xC4\x09\xc1\x00\x00bytes\xff");
+        assert_eq!(to_slice_named(&mut buf, &value).unwrap(),
+            b"\x91\x81\xA3key\xC4\x09\xc1\x00\x00bytes\xff");
+        for len in 0..13 {
+            assert_eq!(to_slice_compact(&mut buf[..len], &value), Err(Error::Writer(SerError::BufferFull)));
+        }
+        for len in 0..14 {
+            assert_eq!(to_slice(&mut buf[..len], &value), Err(Error::Writer(SerError::BufferFull)));
+        }
+        for len in 0..buf.len() {
+            assert_eq!(to_slice_named(&mut buf[..len], &value), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn test_msgpack_map() {
         let test_map = |amap, header: &[u8]| {
+            let mut buf = [0u8,20];
             let res = to_vec(&amap).unwrap();
             assert_eq!(&res[0..header.len()], header);
             let (b, len): (BTreeMap::<u32,bool>, _) = crate::from_slice(&res).unwrap();
@@ -1222,20 +1303,47 @@ mod tests {
             assert_eq!(amap, b);
             assert_eq!(to_vec_compact(&amap).unwrap(), res);
             assert_eq!(to_vec_named(&amap).unwrap(), res);
+            // errors
+            for len in 0..buf.len() {
+                assert_eq!(to_slice_compact(&mut buf[..len], &amap), Err(Error::Writer(SerError::BufferFull)));
+                assert_eq!(to_slice(&mut buf[..len], &amap), Err(Error::Writer(SerError::BufferFull)));
+                assert_eq!(to_slice_named(&mut buf[..len], &amap), Err(Error::Writer(SerError::BufferFull)));
+            }
         };
+        // MAP-32
         let mut a = BTreeMap::<u32,bool>::new();
         for k in 0..65536 {
             a.insert(k, true);
         }
         let expected = &[0xDF, 0x00, 0x01, 0x00, 0x00];
         test_map(a, expected);
-
+        // MAP-16
         let mut a = BTreeMap::<u32,bool>::new();
         for k in 0..256 {
             a.insert(k, true);
         }
         let expected = &[0xDE, 0x01, 0x00];
         test_map(a, expected);
+    }
+
+    #[test]
+    fn test_msgpack_map_err() {
+        struct PhonyMap<'a>(&'a[(i32,bool)]);
+        // forbidden unknown length maps
+        impl<'a> serde::Serialize for PhonyMap<'a>{
+            fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+                where S: serde::Serializer
+            {
+                serializer.serialize_map(None)?;
+                unreachable!();
+            }
+        }
+        let a = PhonyMap(&[(1,true)]);
+        assert_eq!(a.0, [(1,true)]);
+        let mut buf = [0u8,10];
+        assert_eq!(to_slice_compact(&mut buf, &a), Err(Error::MapLength));
+        assert_eq!(to_slice(&mut buf, &a), Err(Error::MapLength));
+        assert_eq!(to_slice_named(&mut buf, &a), Err(Error::MapLength));
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
@@ -1252,11 +1360,20 @@ mod tests {
         assert_eq!(to_vec(&a).unwrap(), expected);
         assert_eq!(to_vec_compact(&a).unwrap(), expected);
         assert_eq!(to_vec_named(&a).unwrap(), expected);
+        let mut buf = [0u8;10];
+        // errors
+        for len in 0..buf.len() {
+            assert_eq!(to_slice_compact(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice_named(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
     #[test]
     fn test_msgpack_str() {
+        // STR-16
+        let mut buf = [0u8;10];
         let s = include_str!("../LICENSE-MIT");
         let mut expected = vec![0xDA];
         expected.extend_from_slice(&u16::try_from(s.len()).unwrap().to_be_bytes());
@@ -1264,7 +1381,13 @@ mod tests {
         assert_eq!(to_vec(s).unwrap(), expected);
         assert_eq!(to_vec_compact(s).unwrap(), expected);
         assert_eq!(to_vec_named(s).unwrap(), expected);
-
+        // errors
+        for len in 0..buf.len() {
+            assert_eq!(to_slice_compact(&mut buf[..len], s), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice(&mut buf[..len], s), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice_named(&mut buf[..len], s), Err(Error::Writer(SerError::BufferFull)));
+        }
+        // STR-32
         let mut s = String::new();
         for _ in 0..256u16 {
             for i in 0..=255u8 {
@@ -1277,6 +1400,12 @@ mod tests {
         assert_eq!(to_vec(&s).unwrap(), expected);
         assert_eq!(to_vec_compact(&s).unwrap(), expected);
         assert_eq!(to_vec_named(&s).unwrap(), expected);
+        // errors
+        for len in 0..buf.len() {
+            assert_eq!(to_slice_compact(&mut buf[..len], &s), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice(&mut buf[..len], &s), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice_named(&mut buf[..len], &s), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1313,16 +1442,58 @@ mod tests {
         assert_eq!(to_slice(&mut buf, "💣").unwrap(), b"\xA4\xf0\x9f\x92\xa3"); // 4 byte character
         assert_eq!(to_slice_compact(&mut buf, "💣").unwrap(), b"\xA4\xf0\x9f\x92\xa3"); // 4 byte character
         assert_eq!(to_slice_named(&mut buf, "💣").unwrap(), b"\xA4\xf0\x9f\x92\xa3"); // 4 byte character
-
+        assert_eq!(to_slice(&mut buf, &'ä').unwrap(), b"\xA2\xC3\xA4");
+        assert_eq!(to_slice_compact(&mut buf, &'ä').unwrap(), b"\xA2\xC3\xA4");
+        assert_eq!(to_slice_named(&mut buf, &'ä').unwrap(), b"\xA2\xC3\xA4");
+        assert_eq!(to_slice(&mut buf, &'৬').unwrap(), b"\xA3\xe0\xa7\xac");
+        assert_eq!(to_slice_compact(&mut buf, &'৬').unwrap(), b"\xA3\xe0\xa7\xac");
+        assert_eq!(to_slice_named(&mut buf, &'৬').unwrap(), b"\xA3\xe0\xa7\xac");
+        assert_eq!(to_slice(&mut buf, &'\u{A0}').unwrap(), b"\xA2\xC2\xA0"); // non-breaking space
+        assert_eq!(to_slice_compact(&mut buf, &'\u{A0}').unwrap(), b"\xA2\xC2\xA0"); // non-breaking space
+        assert_eq!(to_slice_named(&mut buf, &'\u{A0}').unwrap(), b"\xA2\xC2\xA0"); // non-breaking space
+        assert_eq!(to_slice(&mut buf, &'ℝ').unwrap(), b"\xA3\xe2\x84\x9d"); // 3 byte character
+        assert_eq!(to_slice(&mut buf, &'💣').unwrap(), b"\xA4\xf0\x9f\x92\xa3"); // 4 byte character
+        assert_eq!(to_slice_compact(&mut buf, &'💣').unwrap(), b"\xA4\xf0\x9f\x92\xa3"); // 4 byte character
+        assert_eq!(to_slice_named(&mut buf, &'💣').unwrap(), b"\xA4\xf0\x9f\x92\xa3"); // 4 byte character
         assert_eq!(to_slice(&mut buf, "\r").unwrap(), b"\xA1\r");
+        assert_eq!(to_slice(&mut buf, &'\r').unwrap(), b"\xA1\r");
         assert_eq!(to_slice_compact(&mut buf, "\x00\t\r\n").unwrap(), b"\xA4\x00\t\r\n");
         assert_eq!(to_slice_named(&mut buf, "\x00\t\r\n").unwrap(), b"\xA4\x00\t\r\n");
+
+        struct SimpleDecimal(f32);
+        impl fmt::Display for SimpleDecimal {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{:.2}", &self.0)
+            }
+        }
+        impl serde::Serialize for SimpleDecimal {
+            fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+                where S: serde::Serializer
+            {
+                serializer.collect_str(self)
+            }
+        }
+        let a = SimpleDecimal(core::f32::consts::PI);
+        assert_eq!(to_slice(&mut buf, &a).unwrap(), b"\xA43.14");
+        assert_eq!(to_slice_compact(&mut buf, &a).unwrap(), b"\xA43.14");
+        assert_eq!(to_slice_named(&mut buf, &a).unwrap(), b"\xA43.14");
 
         let s = "Γαζίες καὶ μυρτιὲς δὲν θὰ βρῶ πιὰ στὸ χρυσαφὶ ξέφωτο";
         let expected = b"\xD9\x67\xce\x93\xce\xb1\xce\xb6\xce\xaf\xce\xb5\xcf\x82\x20\xce\xba\xce\xb1\xe1\xbd\xb6\x20\xce\xbc\xcf\x85\xcf\x81\xcf\x84\xce\xb9\xe1\xbd\xb2\xcf\x82\x20\xce\xb4\xe1\xbd\xb2\xce\xbd\x20\xce\xb8\xe1\xbd\xb0\x20\xce\xb2\xcf\x81\xe1\xbf\xb6\x20\xcf\x80\xce\xb9\xe1\xbd\xb0\x20\xcf\x83\xcf\x84\xe1\xbd\xb8\x20\xcf\x87\xcf\x81\xcf\x85\xcf\x83\xce\xb1\xcf\x86\xe1\xbd\xb6\x20\xce\xbe\xce\xad\xcf\x86\xcf\x89\xcf\x84\xce\xbf";
         assert_eq!(to_slice(&mut buf, s).unwrap(), expected);
         assert_eq!(to_slice_compact(&mut buf, s).unwrap(), expected);
         assert_eq!(to_slice_named(&mut buf, s).unwrap(), expected);
+        // errors
+        for len in 0..5 {
+            assert!(to_slice_compact(&mut buf[..len], &a).is_err());
+            assert!(to_slice(&mut buf[..len], &a).is_err());
+            assert!(to_slice_named(&mut buf[..len], &a).is_err());
+        }
+        for len in 0..expected.len() {
+            assert_eq!(to_slice_compact(&mut buf[..len], s), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice(&mut buf[..len], s), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice_named(&mut buf[..len], s), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1335,16 +1506,45 @@ mod tests {
         assert_eq!(to_slice(&mut buf, &[0, 1, 2]).unwrap(), b"\x93\x00\x01\x02");
         assert_eq!(to_slice_compact(&mut buf, &[0, 1, 2]).unwrap(), b"\x93\x00\x01\x02");
         assert_eq!(to_slice_named(&mut buf, &[0, 1, 2]).unwrap(), b"\x93\x00\x01\x02");
-        let ary = [-1i8;15];
+        // FIXARRAY
+        let a = [-1i8;15];
         let expected = b"\x9F\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF";
-        assert_eq!(to_slice(&mut buf, &ary).unwrap(), expected);
-        assert_eq!(to_slice_compact(&mut buf, &ary).unwrap(), expected);
-        assert_eq!(to_slice_named(&mut buf, &ary).unwrap(), expected);
-        let ary = [-1i32;16];
+        assert_eq!(to_slice(&mut buf, &a).unwrap(), expected);
+        assert_eq!(to_slice_compact(&mut buf, &a).unwrap(), expected);
+        assert_eq!(to_slice_named(&mut buf, &a).unwrap(), expected);
+        // errors
+        for len in 0..expected.len() {
+            assert_eq!(to_slice_compact(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice_named(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
+        // ARRAY-16
+        let a = [-1i32;16];
         let expected = b"\xDC\x00\x10\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF";
-        assert_eq!(to_slice(&mut buf, &ary).unwrap(), expected);
-        assert_eq!(to_slice_compact(&mut buf, &ary).unwrap(), expected);
-        assert_eq!(to_slice_named(&mut buf, &ary).unwrap(), expected);
+        assert_eq!(to_slice(&mut buf, &a).unwrap(), expected);
+        assert_eq!(to_slice_compact(&mut buf, &a).unwrap(), expected);
+        assert_eq!(to_slice_named(&mut buf, &a).unwrap(), expected);
+        // errors
+        for len in 0..expected.len() {
+            assert_eq!(to_slice_compact(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice_named(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
+        // forbidden unknown length sequences
+        struct PhonySeq<'a>(&'a[i32]);
+        impl<'a> serde::Serialize for PhonySeq<'a> {
+            fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+                where S: serde::Serializer
+            {
+                serializer.serialize_seq(None)?;
+                unreachable!();
+            }
+        }
+        let a = PhonySeq(&[1,2,3]);
+        assert_eq!(a.0, [1,2,3]);
+        assert_eq!(to_slice_compact(&mut buf, &a), Err(Error::SeqLength));
+        assert_eq!(to_slice(&mut buf, &a), Err(Error::SeqLength));
+        assert_eq!(to_slice_named(&mut buf, &a), Err(Error::SeqLength));
     }
 
     #[test]
@@ -1576,26 +1776,14 @@ mod tests {
             b"\x82\xABdescription\xBDAn ambient temperature sensor\xA5value\xC0");
 
         let property = Property { description: None, value: None };
-        assert_eq!(
-            to_slice_compact(&mut buf, &property),
-            Err(Error::FieldSkipped));
-        assert_eq!(
-            to_slice(&mut buf, &property).unwrap(),
-            b"\x81\x01\xC0");
-        assert_eq!(
-            to_slice_named(&mut buf, &property).unwrap(),
-            b"\x81\xA5value\xC0");
+        assert_eq!(to_slice_compact(&mut buf, &property), Err(Error::FieldSkipped));
+        assert_eq!(to_slice(&mut buf, &property).unwrap(), b"\x81\x01\xC0");
+        assert_eq!(to_slice_named(&mut buf, &property).unwrap(), b"\x81\xA5value\xC0");
 
         let property = Property { description: None, value: Some(0) };
-        assert_eq!(
-            to_slice_compact(&mut buf, &property),
-            Err(Error::FieldSkipped));
-        assert_eq!(
-            to_slice(&mut buf, &property).unwrap(),
-            b"\x81\x01\x00");
-        assert_eq!(
-            to_slice_named(&mut buf, &property).unwrap(),
-            b"\x81\xA5value\x00");
+        assert_eq!(to_slice_compact(&mut buf, &property), Err(Error::FieldSkipped));
+        assert_eq!(to_slice(&mut buf, &property).unwrap(), b"\x81\x01\x00");
+        assert_eq!(to_slice_named(&mut buf, &property).unwrap(), b"\x81\xA5value\x00");
 
         let property = Property {
             description: Some("Answer to the Ultimate Question?"),
@@ -1612,35 +1800,22 @@ mod tests {
             b"\x82\xABdescription\xD9\x20Answer to the Ultimate Question?\xA5value\x2A");
 
         let skippable = Skippable { value: None, description: None};
-        assert_eq!(
-            to_slice_compact(&mut buf, &skippable).unwrap(),
-            b"\x91\xC0");
-        assert_eq!(
-            to_slice(&mut buf, &skippable).unwrap(),
-            b"\x81\x00\xC0");
-        assert_eq!(
-            to_slice_named(&mut buf, &skippable).unwrap(),
-            b"\x81\xA5value\xC0");
+        assert_eq!(to_slice_compact(&mut buf, &skippable).unwrap(), b"\x91\xC0");
+        assert_eq!(to_slice(&mut buf, &skippable).unwrap(), b"\x81\x00\xC0");
+        assert_eq!(to_slice_named(&mut buf, &skippable).unwrap(), b"\x81\xA5value\xC0");
 
         let skippable = Skippable { value: Some(0), description: None};
-        assert_eq!(
-            to_slice_compact(&mut buf, &skippable).unwrap(),
-            b"\x91\x00");
-        assert_eq!(
-            to_slice(&mut buf, &skippable).unwrap(),
-            b"\x81\x00\x00");
-        assert_eq!(
-            to_slice_named(&mut buf, &skippable).unwrap(),
-            b"\x81\xA5value\x00");
+        assert_eq!(to_slice_compact(&mut buf, &skippable).unwrap(), b"\x91\x00");
+        assert_eq!(to_slice(&mut buf, &skippable).unwrap(), b"\x81\x00\x00");
+        assert_eq!(to_slice_named(&mut buf, &skippable).unwrap(), b"\x81\xA5value\x00");
     }
-
 
     #[test]
     fn test_ser_struct_() {
         #[derive(Serialize)]
         struct Empty {}
 
-        let mut buf = [0u8;20];
+        let mut buf = [0u8;7];
 
         assert_eq!(to_slice_compact(&mut buf, &Empty {}).unwrap(), &[0x90]);
         assert_eq!(to_slice(&mut buf, &Empty {}).unwrap(), &[0x80]);
@@ -1662,6 +1837,16 @@ mod tests {
         assert_eq!(
             to_slice_named(&mut buf, &tuple).unwrap(),
             b"\x82\xA1a\xC3\xA1b\xC2");
+        // errors
+        for len in 0..3 {
+            assert_eq!(to_slice_compact(&mut buf[..len], &tuple), Err(Error::Writer(SerError::BufferFull)));
+        }
+        for len in 0..5 {
+            assert_eq!(to_slice(&mut buf[..len], &tuple), Err(Error::Writer(SerError::BufferFull)));
+        }
+        for len in 0..buf.len() {
+            assert_eq!(to_slice_named(&mut buf[..len], &tuple), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1677,17 +1862,25 @@ mod tests {
         assert_eq!(to_slice(&mut buf, &a).unwrap(), b"\xC0");
         assert_eq!(to_slice_named(&mut buf, &a).unwrap(), b"\xC0");
         assert_eq!(to_slice_compact(&mut buf, &a).unwrap(), b"\xC0");
+        // errors
+        assert_eq!(to_slice_compact(&mut buf[..0], &a), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_slice(&mut buf[..0], &a), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_slice_named(&mut buf[..0], &a), Err(Error::Writer(SerError::BufferFull)));
     }
 
     #[test]
     fn test_ser_newtype_struct() {
         #[derive(Serialize)]
-        struct A(pub u32);
+        struct A(u32);
         let mut buf = [0u8;1];
         let a = A(54);
         assert_eq!(to_slice(&mut buf, &a).unwrap(), &[54]);
         assert_eq!(to_slice_named(&mut buf, &a).unwrap(), &[54]);
         assert_eq!(to_slice_compact(&mut buf, &a).unwrap(), &[54]);
+        // errors
+        assert_eq!(to_slice(&mut buf[..0], &a), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_slice_compact(&mut buf[..0], &a), Err(Error::Writer(SerError::BufferFull)));
+        assert_eq!(to_slice_named(&mut buf[..0], &a), Err(Error::Writer(SerError::BufferFull)));
     }
 
     #[test]
@@ -1696,12 +1889,20 @@ mod tests {
         enum A {
             A(u32),
         }
-        let mut buf = [0u8;8];
+        let mut buf = [0u8;4];
 
         let a = A::A(54);
         assert_eq!(to_slice(&mut buf, &a).unwrap(), &[0x81,0x00,54]);
         assert_eq!(to_slice_compact(&mut buf, &a).unwrap(), &[0x81,0x00,54]);
         assert_eq!(to_slice_named(&mut buf, &a).unwrap(), &[0x81,0xA1,b'A',54]);
+        // errors
+        for len in 0..3 {
+            assert_eq!(to_slice(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));            
+            assert_eq!(to_slice_compact(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
+        for len in 0..buf.len() {
+            assert_eq!(to_slice_named(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1722,6 +1923,91 @@ mod tests {
         assert_eq!(
             to_slice_named(&mut buf, &a).unwrap(),
             &[0x81,0xA1,b'A', 0x82,0xA1,b'x',54, 0xA1,b'y',0xCD,0x02,0xD0]);
+        // errors
+        for len in 0..7 {
+            assert_eq!(to_slice_compact(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
+        for len in 0..9 {
+            assert_eq!(to_slice(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
+        for len in 0..buf.len() {
+            assert_eq!(to_slice_named(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
+    }
+
+    #[test]
+    fn test_ser_struct_variant_option() {
+        #[derive(Serialize)]
+        enum A<'a> {
+            A {
+                #[serde(skip_serializing_if = "Option::is_none")]
+                x: Option<&'a str>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                y: Option<u16>
+            }
+        }
+        let mut buf = [0u8;15];
+        let a = A::A { x: Some("foo"), y: Some(720) };
+
+        assert_eq!(
+            to_slice_compact(&mut buf, &a).unwrap(),
+            &[0x81,0x00, 0x92, 0xA3,b'f',b'o',b'o', 0xCD,0x02,0xd0]);
+        assert_eq!(
+            to_slice(&mut buf, &a).unwrap(),
+            &[0x81,0x00, 0x82, 0x00,0xA3,b'f',b'o',b'o', 0x01,0xCD,0x02,0xd0]);
+        assert_eq!(
+            to_slice_named(&mut buf, &a).unwrap(),
+            &[0x81,0xA1,b'A', 0x82, 0xA1,b'x',0xA3,b'f',b'o',b'o', 0xA1,b'y',0xCD,0x02,0xd0]);
+        // errors
+        for len in 0..10 {
+            assert_eq!(to_slice_compact(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
+        for len in 0..12 {
+            assert_eq!(to_slice(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
+        for len in 0..buf.len() {
+            assert_eq!(to_slice_named(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
+        let a = A::A { x: None, y: None };
+        assert_eq!(to_slice_compact(&mut buf, &a).unwrap(), b"\x81\x00\x90");
+        assert_eq!(to_slice(&mut buf, &a).unwrap(), b"\x81\x00\x80");
+        assert_eq!(to_slice_named(&mut buf, &a).unwrap(), b"\x81\xA1A\x80");
+        let a = A::A { x: Some("foo"), y: None };
+        assert_eq!(to_slice_compact(&mut buf, &a).unwrap(), b"\x81\x00\x91\xA3foo");
+        assert_eq!(to_slice(&mut buf, &a).unwrap(), b"\x81\x00\x81\x00\xA3foo");
+        assert_eq!(to_slice_named(&mut buf, &a).unwrap(), b"\x81\xA1A\x81\xA1x\xA3foo");
+        let a = A::A { x: None, y: Some(720) };
+        assert_eq!(to_slice_compact(&mut buf, &a), Err(Error::FieldSkipped));
+        assert_eq!(to_slice(&mut buf, &a).unwrap(), b"\x81\x00\x81\x01\xCD\x02\xd0");
+        assert_eq!(to_slice_named(&mut buf, &a).unwrap(), b"\x81\xA1A\x81\xA1y\xCD\x02\xd0");
+    }
+
+    #[test]
+    fn test_ser_tuple_variant() {
+        #[derive(Serialize)]
+        enum A {
+            A(u32, u16),
+        }
+        let mut buf = [0u8;8];
+        let a = A::A(54, 720);
+
+        assert_eq!(
+            to_slice_compact(&mut buf, &a).unwrap(),
+            &[0x81,0x00, 0x92,54, 0xCD,0x02,0xD0]);
+        assert_eq!(
+            to_slice(&mut buf, &a).unwrap(),
+            &[0x81,0x00, 0x92,54, 0xCD,0x02,0xD0]);
+        assert_eq!(
+            to_slice_named(&mut buf, &a).unwrap(),
+            &[0x81,0xA1,b'A', 0x92,54, 0xCD,0x02,0xD0]);
+        // errors
+        for len in 0..7 {
+            assert_eq!(to_slice_compact(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+            assert_eq!(to_slice(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
+        for len in 0..buf.len() {
+            assert_eq!(to_slice_named(&mut buf[..len], &a), Err(Error::Writer(SerError::BufferFull)));
+        }
     }
 
     #[test]
@@ -1761,4 +2047,28 @@ mod tests {
         assert_eq!(a1, a2);
     }
 
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    #[test]
+    fn test_ser_error_string() {
+        assert_eq!(format!("{}", Error::from(SerError::BufferFull)), "buffer is full");
+        assert_eq!(format!("{}", Error::<SerError>::MapLength), "unknown or invalid map length");
+        assert_eq!(format!("{}", Error::<SerError>::SeqLength), "unknown or invalid sequence length");
+        assert_eq!(format!("{}", Error::<SerError>::StrLength), "invalid string length");
+        assert_eq!(format!("{}", Error::<SerError>::DataLength), "invalid byte array length");
+        assert_eq!(format!("{}", Error::<SerError>::FieldSkipped), "skipped a field in a middle of struct");
+        assert_eq!(format!("{}", Error::<SerError>::FormatError), "error collecting a string");
+        let custom: Error<SerError> = serde::ser::Error::custom("xxx");
+        assert_eq!(format!("{}", custom), "xxx while serializing MessagePack");
+    }
+
+    #[cfg(not(any(feature = "std", feature = "alloc")))]
+    #[test]
+    fn test_ser_error_fmt() {
+        use core::fmt::Write;
+        let mut buf = [0u8;35];
+        let mut writer = SliceWriter::new(&mut buf);
+        let custom: Error<SerError> = serde::ser::Error::custom("xxx");
+        write!(writer, "{}", custom).unwrap();
+        assert_eq!(writer.as_ref(), b"error while serializing MessagePack");
+    }
 }
