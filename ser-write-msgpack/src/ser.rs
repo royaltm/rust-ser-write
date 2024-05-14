@@ -141,9 +141,9 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
             Error::FieldSkipped => f.write_str("skipped a field in a middle of struct"),
             Error::FormatError => f.write_str("error collecting a string"),
             #[cfg(any(feature = "std", feature = "alloc"))]
-            Error::SerializeError(s) => write!(f, "{} while serializing JSON", s),
+            Error::SerializeError(s) => write!(f, "{} while serializing MessagePack", s),
             #[cfg(not(any(feature = "std", feature = "alloc")))]
-            Error::SerializeError => f.write_str("custom error while serializing JSON"),
+            Error::SerializeError => f.write_str("error while serializing MessagePack"),
         }
     }
 }
