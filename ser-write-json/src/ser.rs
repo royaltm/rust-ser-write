@@ -1278,7 +1278,7 @@ mod tests {
         let expected = r#"{"Foo":"x","Bar":"y"}"#;
         assert_eq!(to_str(&mut buf, &amap).unwrap(), expected);
         #[derive(PartialEq, Eq, PartialOrd, Ord)]
-        pub struct DecimalPoint(u32,u32);
+        struct DecimalPoint(u32,u32);
         impl fmt::Display for DecimalPoint {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, "{}.{}", &self.0, &self.1)
@@ -1459,7 +1459,7 @@ mod tests {
             r#"" \t \u0000 ""#
         );
 
-        pub struct SimpleDecimal(f32);
+        struct SimpleDecimal(f32);
         impl fmt::Display for SimpleDecimal {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, "{:.2}", &self.0)
@@ -1711,7 +1711,7 @@ mod tests {
     #[test]
     fn test_ser_newtype_struct() {
         #[derive(Serialize)]
-        struct A(pub u32);
+        struct A(u32);
 
         let mut buf = [0u8;2];
 
@@ -1808,7 +1808,7 @@ mod tests {
     fn test_ser_serialize_bytes() {
         use core::fmt::Write;
 
-        pub struct SimpleDecimal(f32);
+        struct SimpleDecimal(f32);
 
         impl serde::Serialize for SimpleDecimal {
             fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
