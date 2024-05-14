@@ -41,11 +41,13 @@ clippy-mp:
     cargo clippy -p ser-write-msgpack -- -D warnings
     cargo clippy -p ser-write-msgpack --no-default-features --features=alloc -- -D warnings
 
+# report coverage locally
 cov:
     cargo llvm-cov clean --workspace
-    cargo llvm-cov --no-report --no-default-features
-    cargo llvm-cov --no-report --no-default-features --features=alloc
     cargo llvm-cov --no-report --all-features
+    cargo llvm-cov --no-report --no-default-features --features=alloc
+    cargo llvm-cov --no-report --no-default-features
+    cargo llvm-cov report --lcov --output-path=lcov.info
     cargo llvm-cov report --html --open
 
 clean:
