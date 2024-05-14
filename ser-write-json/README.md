@@ -1,6 +1,12 @@
 ser-write-json
 ==============
 
+[![Crate][Crate img]][Crate Link]
+[![Docs][Docs img]][Docs Link]
+[![Build Status][Build img]][Build Link]
+[![Coverage Status][Coverage img]][Coverage Link]
+[![Minimum rustc version][rustc version img]][rustc version link]
+
 This crate provides a `no_std` friendly [JSON](https://json.org) compact serializer for [serde](https://crates.io/crates/serde) using [`SerWrite`] as a writer and a deserializer for convenience.
 
 This crate has been in some parts derived from work of [serde-json-core](https://crates.io/crates/serde-json-core) and [serde_json](https://crates.io/crates/serde_json).
@@ -54,4 +60,20 @@ Deserializer supports self-describing formats.
 
 Deserializer deserializes structs from both JSON objects and arrays.
 
+
+Rust Version Requirements
+-------------------------
+
+`ser-write-json` requires Rustc version 1.75 or greater.
+
 [`SerWrite`]: https://docs.rs/ser-write/latest/ser_write/trait.SerWrite.html
+[Crate Link]: https://crates.io/crates/ser-write-json
+[Crate img]: https://img.shields.io/crates/v/ser-write-json.svg
+[Docs Link]: https://docs.rs/ser-write-json
+[Docs img]: https://docs.rs/ser-write-json/badge.svg
+[Build Link]: https://github.com/royaltm/rust-ser-write/actions/workflows/rust.yml
+[Build img]: https://github.com/royaltm/rust-ser-write/actions/workflows/rust.yml/badge.svg?branch=main
+[rustc version link]: https://github.com/royaltm/rust-ser-write/ser-write-json#rust-version-requirements
+[rustc version img]: https://img.shields.io/badge/rustc-1.75+-lightgray.svg
+[Coverage Link]: https://coveralls.io/github/royaltm/rust-ser-write?branch=main
+[Coverage img]: https://coveralls.io/repos/github/royaltm/rust-ser-write/badge.svg?branch=main
