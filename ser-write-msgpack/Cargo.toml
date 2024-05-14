@@ -2,7 +2,7 @@
 name = "ser-write-msgpack"
 description = "MessagePack serializer for ser-write and deserializer for convenience"
 authors = ["Rafal Michalski <royaltm75@gmail.com>"]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 keywords = ["embedded", "serde", "messagepack", "msgpack"]
 categories = ["no-std"]
@@ -24,7 +24,7 @@ alloc = ["ser-write/alloc"]
 
 [dependencies]
 serde = { version = "1.0.201", default-features = false }
-ser-write = { version = "0.1", path = "..", default-features = false }
+ser-write = { version = "0.2", path = "..", default-features = false }
 
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }
