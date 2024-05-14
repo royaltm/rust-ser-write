@@ -559,9 +559,6 @@ impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W>
     fn collect_str<T>(self, value: &T) -> Result<Self::Ok, W::Error>
         where T: fmt::Display + ?Sized
     {
-        if let Some(s) = format_args!("{}", value).as_str() {
-            return self.serialize_str(s)
-        }
         let mut col = StringLenCounter(0);
         fmt::write(&mut col, format_args!("{}", value)).map_err(|_| Error::FormatError)?;
         let StringLenCounter(len) = col;
