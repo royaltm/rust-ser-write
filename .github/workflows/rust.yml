@@ -39,6 +39,14 @@ jobs:
         target: thumbv7em-none-eabihf
         override: true
 
+    - name: Install grcov
+      if: matrix.coverage == 'send'
+      uses: actions-rs/install@v0.1
+      with:
+        crate: grcov
+        version: latest
+        use-tool-cache: true
+
     - name: Tests
       env:
         RUSTFLAGS: '-D warnings'
@@ -56,3 +64,41 @@ jobs:
         cargo test -p ser-write --verbose --features=arrayvec,heapless
         cargo build -p ser-write-json-embedded-example --target thumbv7em-none-eabihf --verbose
         cargo build -p ser-write-msgpack-embedded-example --target thumbv7em-none-eabihf --verbose
+
+    - name: Coverage
+      if: matrix.coverage == 'send'
+      env:
+        LLVM_PROFILE_FILE: "ser-write-%p-%m.profraw"
+        RUSTFLAGS: "-Cinstrument-coverage"
+      run: |
+        cargo build --verbose --all-features
+        cargo test --verbose --all-features
+        cargo build --verbose --no-default-features
+        cargo test --verbose --no-default-features
+        grcov . \
+            --binary-path ./target/debug/ \
+            --branch \
+            --output-types lcov \
+            --source-dir . \
+            --output-path ./lcov.info \
+            --ignore-not-existing \
+            --keep-only 'src/*' \
+            --commit-sha ${{ github.sha }} \
+            --service-job-id ${{ github.job }} \
+            --service-name "GitHub Actions" \
+            --service-number ${{ github.run_id }}
+
+    - name: Upload coverage as artifact
+      if: matrix.coverage == 'send'
+      uses: actions/upload-artifact@v2
+      with:
+        name: lcov.info
+        path: ./lcov.info
+        if-no-files-found: error
+
+    - name: Upload coverage to Coveralls
+      if: matrix.coverage == 'send'
+      uses: coverallsapp/github-action@v2
+      with:
+        file: lcov.info
+        format: lcov
