@@ -200,9 +200,9 @@ impl<'de> Deserializer<'de> {
     pub fn eat_some(&mut self, len: usize) {
         self.index += len;
     }
-    /// Return a mutable reference to the unparsed portion of the input slice on success.
+    /// Return a reference to the unparsed portion of the input slice on success.
     /// Otherwise return `Err(Error::UnexpectedEof)`.
-    pub fn input_ref(&mut self) -> Result<&[u8]> {
+    pub fn input_ref(&self) -> Result<&[u8]> {
         self.input.get(self.index..).ok_or(Error::UnexpectedEof)
     }
     /// Split the unparsed portion of the input slice between `0..len` and on success
@@ -380,7 +380,13 @@ impl<'de> Deserializer<'de> {
             MAP_32 => Map(self.fetch_u32()?.try_into()?),
         };
         match mtyp {
-            Single(len) => self.eat_some(len),
+            Single(len) => {
+                let index = self.index + len;
+                if index > self.input.len() {
+                    return Err(Error::UnexpectedEof)
+                }
+                self.index = index;
+            }
             Array(len) => self.eat_seq_items(len)?,
             Map(len) => self.eat_map_items(len)?
         }
