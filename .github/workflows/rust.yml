@@ -83,8 +83,8 @@ jobs:
             --output-path ./lcov.info \
             --ignore-not-existing \
             --keep-only 'src/*' \
-                        'ser-write-json/src/*' \
-                        'ser-write-msgpack/src/*' \
+            --keep-only 'ser-write-json/src/*' \
+            --keep-only 'ser-write-msgpack/src/*' \
             --commit-sha ${{ github.sha }} \
             --service-job-id ${{ github.job }} \
             --service-name "GitHub Actions" \
