@@ -1,6 +1,12 @@
 ser-write
 =========
 
+[![Crate][Crate img]][Crate Link]
+[![Docs][Docs img]][Docs Link]
+[![Build Status][Build img]][Build Link]
+[![Coverage Status][Coverage img]][Coverage Link]
+[![Minimum rustc version][rustc version img]][rustc version link]
+
 Writer-style serializers and deserializers for convenience designed with embedded (`no_std`) targets in mind.
 
 * Writer-style serializers use the common writer trait found in this crate.
@@ -104,3 +110,20 @@ Why though?
 -----------
 
 * This crate would not be needed once something like `io::Write` lands in the Rust core.
+
+
+Rust Version Requirements
+-------------------------
+
+`ser-write` requires Rustc version 1.75 or greater.
+
+[Crate Link]: https://crates.io/crates/ser-write
+[Crate img]: https://img.shields.io/crates/v/ser-write.svg
+[Docs Link]: https://docs.rs/ser-write
+[Docs img]: https://docs.rs/ser-write/badge.svg
+[Build Link]: https://github.com/royaltm/rust-ser-write/actions/workflows/rust.yml
+[Build img]: https://github.com/royaltm/rust-ser-write/actions/workflows/rust.yml/badge.svg?branch=main
+[rustc version link]: https://github.com/royaltm/rust-ser-write#rust-version-requirements
+[rustc version img]: https://img.shields.io/badge/rustc-1.75+-lightgray.svg
+[Coverage Link]: https://coveralls.io/github/royaltm/rust-ser-write?branch=main
+[Coverage img]: https://coveralls.io/repos/github/royaltm/rust-ser-write/badge.svg?branch=main

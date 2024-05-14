@@ -78,11 +78,13 @@ jobs:
         grcov . \
             --binary-path ./target/debug/ \
             --branch \
-            --output-types lcov \
+            --output-type lcov \
             --source-dir . \
             --output-path ./lcov.info \
             --ignore-not-existing \
             --keep-only 'src/*' \
+                        'ser-write-json/src/*' \
+                        'ser-write-msgpack/src/*' \
             --commit-sha ${{ github.sha }} \
             --service-job-id ${{ github.job }} \
             --service-name "GitHub Actions" \
