@@ -2030,6 +2030,19 @@ mod tests {
     }
 
     #[test]
+    fn test_ser_str_array_map_size_errors() {
+        let mut writer = SliceWriter::new(&mut []);
+        let oversize = usize::try_from(u32::MAX).unwrap();
+        assert_eq!(write_str_len(&mut writer, oversize), Err(Error::from(SerError::BufferFull)));
+        assert_eq!(write_array_len(&mut writer, oversize), Err(Error::from(SerError::BufferFull)));
+        assert_eq!(write_map_len(&mut writer, oversize), Err(Error::from(SerError::BufferFull)));
+        let oversize = oversize.checked_add(1).unwrap();
+        assert_eq!(write_str_len(&mut writer, oversize), Err(Error::StrLength));
+        assert_eq!(write_array_len(&mut writer, oversize), Err(Error::SeqLength));
+        assert_eq!(write_map_len(&mut writer, oversize), Err(Error::MapLength));
+    }
+
+    #[test]
     fn test_ser_tuple_struct_roundtrip() {
         use serde::Deserialize;
 

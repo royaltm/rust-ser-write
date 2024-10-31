@@ -169,7 +169,7 @@ impl<'a> fmt::Write for SliceWriter<'a> {
 #[cfg(test)]
 mod tests {
     use core::fmt::Write;
-use super::*;
+    use super::*;
 
     #[test]
     fn test_ser_error() {
