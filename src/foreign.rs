@@ -257,6 +257,7 @@ mod tests {
         assert_eq!(writer.get_ref(), expected);
         assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
         assert_eq!(writer.write(b" ").unwrap_err(), SerError::BufferFull);
+        writer.write(b"").unwrap();
     }
 
     #[cfg(feature = "arrayvec")]
@@ -270,6 +271,7 @@ mod tests {
         assert_eq!(writer.as_slice(), expected);
         assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
         assert_eq!(writer.write(b" ").unwrap_err(), SerError::BufferFull);
+        writer.write(b"").unwrap();
     }
 
     #[cfg(feature = "heapless")]
@@ -283,6 +285,7 @@ mod tests {
         assert_eq!(writer.as_slice(), expected);
         assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
         assert_eq!(writer.write(b" ").unwrap_err(), SerError::BufferFull);
+        writer.write(b"").unwrap();
     }
 
     #[cfg(feature = "smallvec")]
@@ -310,6 +313,7 @@ mod tests {
         assert_eq!(writer.as_slice(), expected);
         assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
         assert_eq!(writer.write(b" ").unwrap_err(), SerError::BufferFull);
+        writer.write(b"").unwrap();
     }
 
     #[cfg(feature = "tinyvec")]
@@ -324,6 +328,7 @@ mod tests {
         assert_eq!(writer.as_slice(), expected);
         assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
         assert_eq!(writer.write(b" ").unwrap_err(), SerError::BufferFull);
+        writer.write(b"").unwrap();
     }
 
     #[cfg(all(feature = "tinyvec", any(feature = "std", feature = "alloc")))]
