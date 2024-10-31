@@ -330,8 +330,8 @@ macro_rules! serialize_unsigned {
 macro_rules! serialize_signed {
     ($self:ident, $N:expr, $v:expr, $ixx:ident, $uxx:ident) => {{
         let v = $v;
-        let (signed, mut v) = if v == $ixx::min_value() {
-            (true, $ixx::max_value() as $uxx + 1)
+        let (signed, mut v) = if v == $ixx::MIN {
+            (true, $ixx::MAX as $uxx + 1)
         } else if v < 0 {
             (true, -v as $uxx)
         } else {

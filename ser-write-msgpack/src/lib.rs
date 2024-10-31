@@ -31,7 +31,7 @@ The `ext` and `fixext` types are properly recognized and skipped over when a val
 
 * [`Deserializer`] supports self-describing formats ([`deserialize_any`]).
 * [`Deserializer`] deserializes structs from MessagePack maps or arrays using both
-`uint` or `str` MessagePack types as field identifiers.
+  `uint` or `str` MessagePack types as field identifiers.
 
 [`Deserializer`] types:
 

@@ -26,7 +26,7 @@
 | `struct variant`  | `{"Name": object}`
 
 * [`Serializer`] supports serializing map keys as JSON strings from integers, chars, bools
-and C-like enums.
+  and C-like enums.
 
 [`Deserializer`] types:
 
@@ -43,7 +43,7 @@ and C-like enums.
 * [`Deserializer`] supports self-describing formats ([`deserialize_any`]).
 * [`Deserializer`] deserializes structs from both JSON objects or arrays.
 * [`Deserializer`] deserializes maps with integer, char, bool or C-like enum keys
-from JSON object's string keys.
+  from JSON object's string keys.
 
 [`Serializer`]: ser::Serializer
 [`Deserializer`]: de::Deserializer
