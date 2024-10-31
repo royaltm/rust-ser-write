@@ -26,7 +26,7 @@ de-any-f32 = []
 
 [dependencies]
 ryu-js = { version = "1.0", default-features = false }
-serde = { version = "1.0.201", default-features = false }
+serde = { version = "1.0.210", default-features = false }
 ser-write = { version = "0.2", path = "..", default-features = false }
 
 [dev-dependencies]
