@@ -27,9 +27,15 @@ Depending on the enabled crate features, `SerWrite` is implemented for:
 * `SliceWriter` - example slice writer implementation,
 * [`arrayvec::ArrayVec<u8,CAP>`](https://crates.io/crates/arrayvec) - `arrayvec` feature,
 * [`heapless::Vec<u8,CAP>`](https://crates.io/crates/heapless) - `heapless` feature,
+* [`smallvec::SmallVec<[u8; CAP]>`](https://crates.io/crates/smallvec) - `smallvec` feature,
+* [`smallvec::ArrayVec<[u8; CAP]>`](https://crates.io/crates/tinyvec) - `tinyvec` feature,
+* [`smallvec::SliceVec<'_, u8>`](https://crates.io/crates/tinyvec) - `tinyvec` feature,
+* [`smallvec::TinyVec<[u8; CAP]>`](https://crates.io/crates/tinyvec) - `tinyvec` with `alloc` or `std` feature,
 * `Vec<u8>` - `alloc` or `std` feature,
 * `VecDeque<u8>` - `alloc` or `std` feature,
 * `io::Cursor<T: io::Write>` - `std` feature,
+
+`smallvec` also enables `alloc`.
 
 
 Usage
