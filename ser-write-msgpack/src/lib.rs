@@ -54,7 +54,7 @@ The `ext` and `fixext` types are properly recognized and skipped over when a val
 [`deserialize_any`]: serde::de::Deserializer::deserialize_any
 */
 #![no_std]
-#![forbid(unsafe_code)]
+#![cfg_attr(not(test), forbid(unsafe_code))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(feature = "std")]

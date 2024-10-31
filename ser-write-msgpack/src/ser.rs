@@ -2030,7 +2030,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ser_str_array_map_size_errors() {
+    fn test_ser_str_array_map_oversize_errors() {
         let mut writer = SliceWriter::new(&mut []);
         let oversize = usize::try_from(u32::MAX).unwrap();
         assert_eq!(write_str_len(&mut writer, oversize), Err(Error::from(SerError::BufferFull)));
@@ -2040,6 +2040,26 @@ mod tests {
         assert_eq!(write_str_len(&mut writer, oversize), Err(Error::StrLength));
         assert_eq!(write_array_len(&mut writer, oversize), Err(Error::SeqLength));
         assert_eq!(write_map_len(&mut writer, oversize), Err(Error::MapLength));
+    }
+
+    #[test]
+    fn test_data_oversize_errors() {
+        let oversize = usize::try_from(u32::MAX).unwrap().checked_add(1).unwrap();
+        // SAFETY: this is safe only when a test succeeds, meaning
+        // the provided slice is never read from.
+        let impossible_bytes = unsafe {
+            let ptr = core::ptr::NonNull::<u8>::dangling().as_ptr();
+            core::slice::from_raw_parts(ptr, oversize)
+        };
+        #[derive(Serialize)]
+        struct Test<'a> {
+            #[serde(with = "serde_bytes")]
+            key: &'a[u8]
+        }
+        let value = Test { key: impossible_bytes };
+        assert_eq!(
+            to_slice_compact(&mut [0u8], &value),
+            Err(Error::DataLength));
     }
 
     #[test]
