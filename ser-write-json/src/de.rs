@@ -371,10 +371,15 @@ macro_rules! impl_checked_sub {
 impl_parse_tool!(u8, u16, u32, u64, i8, i16, i32, i64);
 impl_checked_sub!(i8, i16, i32, i64);
 
+#[cfg(feature = "de-any-f32")]
+type AnyFloat = f32;
+#[cfg(not(feature = "de-any-f32"))]
+type AnyFloat = f64;
+
 enum AnyNumber {
     PosInt(u64),
     NegInt(i64),
-    Float(f64)
+    Float(AnyFloat),
 }
 
 /// Implementation exposes some helper functions for custom [`StringByteDecoder`] implementations.
@@ -588,7 +593,7 @@ impl<'de, P> Deserializer<'de, P> {
         // caller has guaranteed that `pattern` contains only ASCII characters.
         let s = unsafe { str::from_utf8_unchecked(input) };
         let num = if is_float {
-            AnyNumber::Float(f64::from_str(s)?)
+            AnyNumber::Float(AnyFloat::from_str(s)?)
         }
         else if is_negative {
             AnyNumber::NegInt(i64::from_str(s)?)
@@ -895,6 +900,9 @@ impl<'de, 'a, P> de::Deserializer<'de> for &'a mut Deserializer<'de, P>
             c@(b'0'..=b'9'|b'-') => match self.parse_float_or_int(c)? {
                 AnyNumber::PosInt(n) => visitor.visit_u64(n),
                 AnyNumber::NegInt(n) => visitor.visit_i64(n),
+                #[cfg(feature = "de-any-f32")]
+                AnyNumber::Float(f) => visitor.visit_f32(f),
+                #[cfg(not(feature = "de-any-f32"))]
                 AnyNumber::Float(f) => visitor.visit_f64(f),
             }
             b'[' => self.deserialize_seq(visitor),
@@ -2871,7 +2879,21 @@ mod tests {
         assert_eq!(
             from_bufstr(&mut buf, input),
             Ok((Thing::Float(0.0), input.len())));
+        let input = "3.40282347E+38";
+        #[cfg(feature = "de-any-f32")]
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Float(f32::MAX as f64), input.len())));
+        #[cfg(not(feature = "de-any-f32"))]
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Float(3.40282347E+38), input.len())));
         let input = "1.7976931348623157e308";
+        #[cfg(feature = "de-any-f32")]
+        assert_eq!(
+            from_bufstr(&mut buf, input),
+            Ok((Thing::Float(f64::INFINITY), input.len())));
+        #[cfg(not(feature = "de-any-f32"))]
         assert_eq!(
             from_bufstr(&mut buf, input),
             Ok((Thing::Float(f64::MAX), input.len())));

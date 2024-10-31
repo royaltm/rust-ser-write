@@ -21,6 +21,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["std"]
 std = ["ser-write/std"]
 alloc = ["ser-write/alloc"]
+# deserialize any float using f32 instead of f64
+de-any-f32 = []
 
 [dependencies]
 ryu-js = { version = "1.0", default-features = false }

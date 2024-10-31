@@ -19,7 +19,7 @@ fn deserialize_any() {
         "name": "John Doe",
         "age": 43,
         "score": -999,
-        "height": 5.9,
+        "height": 5.75,
         "phones": [
             "+44 1234567",
             "+44 2345678"
@@ -30,13 +30,13 @@ fn deserialize_any() {
         name: "John Doe",
         age: 43,
         score: -999,
-        height: 5.9,
+        height: 5.75,
         phones: vec!["+44 1234567", "+44 2345678"],
         human: true
     };
     let s = to_string(&john_val).unwrap();
     assert_eq!(s,
-        r#"{"age":43,"height":5.9,"human":true,"name":"John Doe","phones":["+44 1234567","+44 2345678"],"score":-999}"#
+        r#"{"age":43,"height":5.75,"human":true,"name":"John Doe","phones":["+44 1234567","+44 2345678"],"score":-999}"#
     );
     let mut vec = s.clone().into_bytes();
     let test: Test = from_mut_slice(&mut vec).unwrap();
@@ -47,7 +47,7 @@ fn deserialize_any() {
 
     let s = to_string(&john_test).unwrap();
     assert_eq!(s,
-        r#"{"name":"John Doe","age":43,"score":-999,"height":5.9,"phones":["+44 1234567","+44 2345678"],"human":true}"#
+        r#"{"name":"John Doe","age":43,"score":-999,"height":5.75,"phones":["+44 1234567","+44 2345678"],"human":true}"#
     );
     let mut vec = s.clone().into_bytes();
     let test: Test = from_mut_slice(&mut vec).unwrap();

@@ -1,5 +1,5 @@
 // fun with enums and serde
-#![cfg(any(feature = "std", feature = "alloc"))]
+#![cfg(all(not(feature = "de-any-f32"), any(feature = "std", feature = "alloc")))]
 use core::fmt::{self, Display, Formatter};
 
 use serde::{Serialize, Deserialize};

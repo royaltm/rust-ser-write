@@ -38,8 +38,9 @@ Features:
 
 * `std` enables std library,
 * `alloc` enables alloc library
+* `de-any-f32` deserialize *any* float using f32 instead of f64
 
-With any of the above features enabled additional `to_string...`  methods are provided for convenience.
+With `std` or `alloc` features enabled additional `to_string...`  methods are provided for convenience.
 
 
 Deserializer

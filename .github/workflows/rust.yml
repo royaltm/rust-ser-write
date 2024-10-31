@@ -57,11 +57,20 @@ jobs:
         cargo test --verbose --no-default-features
         cargo build --verbose --no-default-features --features=alloc
         cargo test --verbose --no-default-features --features=alloc
+        cargo build -p ser-write-json --verbose --features=de-any-f32
+        cargo test -p ser-write-json --verbose --features=de-any-f32
+        cargo build -p ser-write-json --verbose --no-default-features --features=de-any-f32
+        cargo test -p ser-write-json --verbose --no-default-features --features=de-any-f32
+        cargo build -p ser-write-json --verbose --no-default-features --features alloc,de-any-f32
+        cargo test -p ser-write-json --verbose --no-default-features --features alloc,de-any-f32
+        cargo build -p ser-write --verbose --features=arrayvec,heapless
+        cargo test -p ser-write --verbose --features=arrayvec,heapless
         cargo test -r --verbose
         cargo test -r --verbose --no-default-features
         cargo test -r --verbose --no-default-features --features=alloc
-        cargo build -p ser-write --verbose --features=arrayvec,heapless
-        cargo test -p ser-write --verbose --features=arrayvec,heapless
+        cargo test -r -p ser-write-json --verbose --features=de-any-f32
+        cargo test -r -p ser-write-json --verbose --no-default-features --features=de-any-f32
+        cargo test -r -p ser-write-json --verbose --no-default-features --features=alloc,de-any-f32
         cargo build -p ser-write-json-embedded-example --target thumbv7em-none-eabihf --verbose
         cargo build -p ser-write-msgpack-embedded-example --target thumbv7em-none-eabihf --verbose
 
@@ -71,10 +80,12 @@ jobs:
         LLVM_PROFILE_FILE: "ser-write-%p-%m.profraw"
         RUSTFLAGS: "-Cinstrument-coverage"
       run: |
+        cargo build --verbose
+        cargo test --verbose
         cargo build --verbose --all-features
         cargo test --verbose --all-features
-        cargo build --verbose --no-default-features
-        cargo test --verbose --no-default-features
+        cargo build --verbose --no-default-features --features=alloc
+        cargo test --verbose --no-default-features --features=alloc
         grcov . \
             --binary-path ./target/debug/ \
             --branch \
