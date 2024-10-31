@@ -20,7 +20,11 @@ test:
     cargo test -r --no-default-features -- --nocapture --test-threads=1
     cargo test -r --no-default-features --features=alloc -- --nocapture --test-threads=1
     cargo test -r -- --nocapture --test-threads=1
-    cargo test -p ser-write --features=arrayvec,heapless -- --nocapture --test-threads=1
+    cargo test -p ser-write --no-default-features --features=arrayvec,heapless,tinyvec -- --nocapture --test-threads=1
+    cargo test -p ser-write --all-features -- --nocapture --test-threads=1
+    cargo test -p ser-write-json --features=de-any-f32 -- --nocapture --test-threads=1
+    cargo test -p ser-write-json --no-default-features --features=de-any-f32 -- --nocapture --test-threads=1
+    cargo test -p ser-write-json --no-default-features --features alloc,de-any-f32 -- --nocapture --test-threads=1
 
 # run clippy tests
 clippy: clippy-json clippy-mp
@@ -33,6 +37,7 @@ clippy: clippy-json clippy-mp
 clippy-json:
     touch ser-write-json/src/lib.rs
     cargo clippy -p ser-write-json -- -D warnings
+    cargo clippy -p ser-write-json --features=de-any-f32 -- -D warnings
     cargo clippy -p ser-write-json --no-default-features --features=alloc -- -D warnings
 
 # run clippy tests ser-write-msgpack
@@ -44,6 +49,7 @@ clippy-mp:
 # report coverage locally
 cov:
     cargo llvm-cov clean --workspace
+    cargo llvm-cov --no-report
     cargo llvm-cov --no-report --all-features
     cargo llvm-cov --no-report --no-default-features --features=alloc
     cargo llvm-cov --no-report --no-default-features
