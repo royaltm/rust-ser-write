@@ -47,13 +47,13 @@ For example:
 
 ```
 [dependencies]
-ser-write-json = { version = "0.1", default-features = false }
+ser-write-json = { version = "0.3", default-features = false }
 ```
 
 If you want to also pull implementations of `SerWrite` for the foreign types add:
 
 ```
-ser-write = { version = "0.1", default-features = false, features = ["arrayvec", "heapless"] }
+ser-write = { version = "0.3", default-features = false, features = ["arrayvec", "heapless"] }
 ```
 
 In the above example implementations for: `arrayvec::ArrayVec<u8;_>` and `heapless::Vec<u8>` are selected.
