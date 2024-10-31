@@ -84,6 +84,8 @@ jobs:
         cargo test --verbose --all-features
         cargo build --verbose --no-default-features --features=alloc
         cargo test --verbose --no-default-features --features=alloc
+        cargo build --verbose --no-default-features
+        cargo test --verbose --no-default-features
         grcov . \
             --binary-path ./target/debug/ \
             --branch \
