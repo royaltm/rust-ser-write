@@ -115,7 +115,7 @@ Why though?
 Rust Version Requirements
 -------------------------
 
-`ser-write` requires Rustc version 1.75 or greater.
+`ser-write` requires Rustc version 1.81 or greater.
 
 [Crate Link]: https://crates.io/crates/ser-write
 [Crate img]: https://img.shields.io/crates/v/ser-write.svg
@@ -124,6 +124,6 @@ Rust Version Requirements
 [Build Link]: https://github.com/royaltm/rust-ser-write/actions/workflows/rust.yml
 [Build img]: https://github.com/royaltm/rust-ser-write/actions/workflows/rust.yml/badge.svg?branch=main
 [rustc version link]: https://github.com/royaltm/rust-ser-write#rust-version-requirements
-[rustc version img]: https://img.shields.io/badge/rustc-1.75+-lightgray.svg
+[rustc version img]: https://img.shields.io/badge/rustc-1.81+-lightgray.svg
 [Coverage Link]: https://coveralls.io/github/royaltm/rust-ser-write?branch=main
 [Coverage img]: https://coveralls.io/repos/github/royaltm/rust-ser-write/badge.svg?branch=main

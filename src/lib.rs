@@ -41,9 +41,7 @@ impl fmt::Display for SerError {
     }
 }
 
-#[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl std::error::Error for SerError {}
+impl core::error::Error for SerError {}
 
 /// Serializers should write data to the implementations of this trait.
 pub trait SerWrite {
