@@ -23,7 +23,7 @@ std = ["ser-write/std"]
 alloc = ["ser-write/alloc"]
 
 [dependencies]
-serde = { version = "1.0.210", default-features = false }
+serde = { version = "1.0.219", default-features = false }
 ser-write = { version = "0.3", path = "..", default-features = false }
 
 [dev-dependencies]

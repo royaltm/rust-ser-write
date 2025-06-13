@@ -29,8 +29,8 @@ tinyvec = ["dep:tinyvec"]
 [dependencies]
 arrayvec = { version = "0.7", default-features = false, optional = true }
 heapless = { version = "0.8", default-features = false, optional = true }
-smallvec = { version = "1.13", default-features = false, optional = true }
-tinyvec = { version = "1.8", default-features = false, optional = true, features = ["grab_spare_slice", "rustc_1_57"] }
+smallvec = { version = "1.15", default-features = false, optional = true }
+tinyvec = { version = "1.9", default-features = false, optional = true, features = ["grab_spare_slice", "rustc_1_57"] }
 
 [workspace]
 resolver = "2"
