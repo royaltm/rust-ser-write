@@ -782,6 +782,8 @@ pub struct SeqMapSerializer<'a, W, B> {
 /// strings.
 ///
 /// This object is used internally by [`Serializer::collect_str`] method.
+///
+/// [`Serializer::collect_str`]: ser::Serializer::collect_str
 pub struct StringCollector<'a, W> {
     output: &'a mut W,
 }
@@ -1891,5 +1893,18 @@ mod tests {
         let custom: Error<SerError> = serde::ser::Error::custom("xxx");
         write!(writer, "{}", custom).unwrap();
         assert_eq!(writer.as_ref(), b"error while serializing JSON");
+    }
+
+    #[test]
+    fn test_ser_string_collector() {
+        use core::fmt::Write;
+        let mut buf = [0u8;22];
+        let mut writer = SliceWriter::new(&mut buf);
+        let mut col = StringCollector::new(&mut writer);
+        col.write_str("foo bar").unwrap();
+        writeln!(col, "ℝ\tä\x00").unwrap();
+        let (res, writer) = writer.split();
+        assert_eq!(res, b"foo bar\xe2\x84\x9d\\t\xc3\xa4\\u0000\\n");
+        assert_eq!(writer.capacity(), 0);
     }
 }
