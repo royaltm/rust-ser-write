@@ -24,7 +24,7 @@ ser-write-json = { version = "0.3", default-features = false }
 Serializer
 ----------
 
-The crate provides JSON serializers in 4 flavors depending on how do you want to handle types serialized with `serialize_bytes` method.
+`ser-write-json` provides JSON serializers in 4 flavors depending on how do you want to handle types serialized with `serialize_bytes` method.
 
 * `to_writer` - serialize bytes as number arrays,
 * `to_writer_hex_bytes` - as HEX-encoded strings,
@@ -37,8 +37,7 @@ Custom string encoders can be implemented using `ByteEncoder` trait. There's an 
 Features:
 
 * `std` enables std library,
-* `alloc` enables alloc library
-* `de-any-f32` deserialize *any* float using f32 instead of f64
+* `alloc` enables alloc library,
 
 With `std` or `alloc` features enabled additional `to_string...`  methods are provided for convenience.
 
@@ -46,7 +45,7 @@ With `std` or `alloc` features enabled additional `to_string...`  methods are pr
 Deserializer
 ------------
 
-The JSON deserializer expects a JSON encoded **mutable slice** of bytes. `&str` or `&[u8]` types deserialize using (ZERO-COPY) references from the provided slice. The slice needs to be mutable so the decoder can unescape JSON strings and decode bytes from strings in various formats in-place.
+Unlike most JSON deserializers, a deserializer in `ser-write-json` expects a JSON encoded **mutable slice** of bytes. `&str` or `&[u8]` types are deserialized using (ZERO-COPY) references from the provided slice. The slice needs to be mutable so the decoder can unescape JSON strings and decode bytes from strings in various formats in-place.
 
 The JSON deserializer is available in 4 flavors depending on how do you want to handle types deserialized with `deserialize_bytes` method from JSON strings:
 
@@ -55,11 +54,15 @@ The JSON deserializer is available in 4 flavors depending on how do you want to 
 * `from_mut_slice_base64_bytes` - expect Base64 encoded string,
 * `from_mut_slice_with_decoder` - a custom decoder can be provided.
 
-Deserializer can also deserialize bytes in-place from a JSON array of numbers regardless of the chosen implementation.
+`Deserializer` deserializes bytes in-place from a JSON array of numbers regardless of the chosen implementation.
 
-Deserializer supports self-describing formats.
+`Deserializer` supports self-describing formats.
 
-Deserializer deserializes structs from both JSON objects and arrays.
+`Deserializer` deserializes structs from both JSON objects and arrays.
+
+Features:
+
+* `de-any-f32` deserialization of floats to *any* (self-describing) type will deserialize to `f32` instead of `f64`.
 
 
 Rust Version Requirements
