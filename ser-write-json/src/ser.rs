@@ -259,7 +259,8 @@ pub fn to_writer_pass_bytes<W, T>(writer: W, value: &T) -> Result<(), W::Error>
 }
 
 impl<W, B> Serializer<W, B> {
-    /// Create a new `Serializer` with the given `output` that should implement [`SerWrite`].
+    /// Create a new `Serializer` with the given `output` object that should
+    /// implement [`SerWrite`].
     #[inline(always)]
     pub fn new(output: W) -> Self {
         Serializer { output, format: PhantomData }
@@ -776,11 +777,18 @@ pub struct SeqMapSerializer<'a, W, B> {
     first: bool
 }
 
-struct StringCollector<'a, W> {
+/// Strings written to this object using [`fmt::Write`] trait are written
+/// to the underlying writer with characters escaped using JSON syntax for
+/// strings.
+///
+/// This object is used internally by [`Serializer::collect_str`] method.
+pub struct StringCollector<'a, W> {
     output: &'a mut W,
 }
 
 impl<'a, W> StringCollector<'a, W> {
+    /// Create a new `StringCollector` with the given `output` object that
+    /// should implement [`SerWrite`].
     #[inline(always)]
     pub fn new(output: &'a mut W) -> Self {
         Self { output }
