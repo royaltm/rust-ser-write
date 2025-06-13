@@ -2,7 +2,7 @@
 name = "ser-write-msgpack"
 description = "MessagePack serializer for ser-write and deserializer for convenience"
 authors = ["Rafal Michalski <royaltm75@gmail.com>"]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 keywords = ["embedded", "serde", "messagepack", "msgpack"]
 categories = ["no-std"]
