@@ -112,10 +112,11 @@ Alternatively there's a Rust Embedded Community crate for serializeing JSONs wit
 `serde-json-core` is a true `no_std`, no `alloc` alternative but rather inconvenient. One has to serialize data into intermediate slices instead just pushing data to outgoing buffers or frame builder implementations.
 
 
-Why though?
------------
+Motivation
+----------
 
 * This crate would not be needed once something like `io::Write` lands in the Rust core.
+* Unique features of the deserializers adds some functionality missing in the other crates.
 
 
 Rust Version Requirements
