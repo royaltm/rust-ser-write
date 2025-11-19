@@ -384,11 +384,11 @@ enum AnyNumber {
 
 /// Implementation exposes some helper functions for custom [`StringByteDecoder`] implementations.
 impl<'de, P> Deserializer<'de, P> {
-    /// Provide a mutable slice, so data can be deserialized in-place
+    /// Create a new decoder instance by providing a mutable slice from which to
+    /// deserialize messages.
     pub fn from_mut_slice(input: &'de mut[u8]) -> Self {
         Deserializer { input, index: 0, _parser: core::marker::PhantomData }
     }
-
     /// Consume deserializer and check if trailing characters only consist of whitespace
     pub fn end(mut self) -> Result<()> {
         // println!("end: {}", core::str::from_utf8(&self.input[self.index..]).unwrap());
@@ -396,23 +396,31 @@ impl<'de, P> Deserializer<'de, P> {
         .map(|_| ())
         .ok_or(Error::TrailingCharacters)
     }
-
-    /// Peek at the next byte code, otherwise return `Err(Error::UnexpectedEof)`.
+    /// Return the remaining number of unparsed bytes in the input slice.
+    ///
+    /// Returns 0 when the input cursor points either at the end or beyond
+    /// the end of the input slice.
+    #[inline]
+    pub fn remaining_len(&self) -> usize {
+        self.input.len().saturating_sub(self.index)
+    }
+    /// Peek at the next byte code and return it on success, otherwise return
+    /// `Err(Error::UnexpectedEof)` if there are no more unparsed bytes
+    /// remaining in the input slice.
     pub fn peek(&self) -> Result<u8> {
         self.input.get(self.index).copied()
         .ok_or(Error::UnexpectedEof)
     }
-
     /// Advance the input cursor by `len` characters.
     ///
     /// _Note_: this function only increases a cursor without any checks!
     pub fn eat_some(&mut self, len: usize) {
         self.index += len;
     }
-
-    /// Advance cursor while discarding any JSON whitespace characters from the input slice
-    /// and peek at the next non-whitespace character.
-    /// Otherwise return `Err(Error::UnexpectedEof)`.
+    /// Advance the input cursor while discarding any JSON whitespace characters from
+    /// the input slice and peek at the next non-whitespace character and return that
+    /// character on success. Otherwise return `Err(Error::UnexpectedEof)` if there
+    /// are no more unparsed characters remaining in the input slice.
     pub fn eat_whitespace(&mut self) -> Result<u8> {
         let index = self.index;
         self.input[index..].iter()
@@ -423,13 +431,11 @@ impl<'de, P> Deserializer<'de, P> {
         })
         .ok_or(Error::UnexpectedEof)
     }
-
     /// Return a mutable reference to the unparsed portion of the input slice on success.
     /// Otherwise return `Err(Error::UnexpectedEof)`.
     pub fn input_mut(&mut self) -> Result<&mut[u8]> {
         self.input.get_mut(self.index..).ok_or(Error::UnexpectedEof)
     }
-
     /// Split the unparsed portion of the input slice between `0..len` and return it with
     /// the lifetime of the original slice container.
     ///
@@ -438,7 +444,9 @@ impl<'de, P> Deserializer<'de, P> {
     /// Drop already parsed bytes and bytes between `len..len+skip` and the new unparsed
     /// input slice will begin at `len + skip`.
     ///
-    /// __Panics__ if `len + skip` overflows or is larger than the size of the unparsed input slice.
+    /// # Panics
+    /// __Panics__ if `len + skip` overflows or is larger than the size of the unparsed
+    /// input slice.
     pub fn split_input(&mut self, len: usize, skip: usize) -> &'de mut[u8] {
         let total_len = self.input.len();
         let ptr = self.input.as_mut_ptr();
@@ -1550,28 +1558,51 @@ mod tests {
         let mut test = [0;1];
         test.copy_from_slice(br#"""#);
         let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.remaining_len(), 1);
         assert_eq!(deser.parse_str_content().unwrap(), "");
+        assert_eq!(deser.remaining_len(), 0);
 
         let mut test = [0;13];
         test.copy_from_slice(br#"Hello World!""#);
         let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.remaining_len(), 13);
         assert_eq!(deser.parse_str_content().unwrap(), "Hello World!");
+        assert_eq!(deser.remaining_len(), 0);
         assert!(deser.input.is_empty());
         assert_eq!(deser.index, 0);
 
         let mut test = [0;46];
         test.copy_from_slice(br#"\u0020Hello\r\\ \b\nW\tor\fld\u007Fy\u0306!\"""#);
         let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.remaining_len(), 46);
         assert_eq!(deser.parse_str_content().unwrap(), " Hello\r\\ \x08\nW\tor\x0cld\x7fy̆!\"");
+        assert_eq!(deser.remaining_len(), 0);
         assert!(deser.input.is_empty());
         assert_eq!(deser.index, 0);
+
+        let mut test = [0;1];
+        test.copy_from_slice(br#"""#);
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.remaining_len(), 1);
+        assert_eq!(deser.eat_str_content(), Ok(()));
+        assert_eq!(deser.remaining_len(), 0);
+        assert_eq!(deser.index, 1);
 
         let mut test = [0;13];
         test.copy_from_slice(br#"Hello World!""#);
         let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
-        assert_eq!(deser.parse_str_content().unwrap(), "Hello World!");
-        assert!(deser.input.is_empty());
-        assert_eq!(deser.index, 0);
+        assert_eq!(deser.remaining_len(), 13);
+        assert_eq!(deser.eat_str_content(), Ok(()));
+        assert_eq!(deser.remaining_len(), 0);
+        assert_eq!(deser.index, 13);
+
+        let mut test = [0;46];
+        test.copy_from_slice(br#"\u0020Hello\r\\ \b\nW\tor\fld\u007Fy\u0306!\"""#);
+        let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);
+        assert_eq!(deser.remaining_len(), 46);
+        assert_eq!(deser.eat_str_content(), Ok(()));
+        assert_eq!(deser.remaining_len(), 0);
+        assert_eq!(deser.index, 46);
 
         let mut test = [0;0];
         let mut deser = DeserializerNopeByteStr::from_mut_slice(&mut test);

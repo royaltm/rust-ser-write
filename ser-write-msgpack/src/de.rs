@@ -174,26 +174,45 @@ enum MsgType {
     Map(usize),
 }
 
-/// Methods in a `Deserializer` are made public, but expect them to be modified in future releases.
+/// Some methods in a `Deserializer` object are made public to allow custom
+/// manipulation of MessagePack encoded data for other purposes than simply
+/// deserializing.
+///
+/// For example, splitting a stream of messages encoded with the MessagePack
+/// format without fully decoding messages.
 impl<'de> Deserializer<'de> {
-    /// Provide a slice from which to deserialize
+    /// Create a new decoder instance by providing a slice from which to
+    /// deserialize messages.
     pub fn from_slice(input: &'de[u8]) -> Self {
         Deserializer { input, index: 0, }
     }
-
-    /// Consume deserializer and return the size of the remaining portion of the input slice
+    /// Consume [`Deserializer`] and return the number of unparsed bytes in
+    /// the input slice on success.
+    ///
+    /// If the input cursor points outside the input slice, an error
+    /// `Error::UnexpectedEof` is returned.
     pub fn end(self) -> Result<usize> {
         self.input.len()
         .checked_sub(self.index)
         .ok_or(Error::UnexpectedEof)
     }
-
-    /// Peek at the next byte code, otherwise return `Err(Error::UnexpectedEof)`.
+    /// Return the remaining number of unparsed bytes in the input slice.
+    ///
+    /// Returns 0 when the input cursor points either at the end or beyond
+    /// the end of the input slice.
+    #[inline]
+    pub fn remaining_len(&self) -> usize {
+        self.input.len().saturating_sub(self.index)
+    }
+    /// Peek at the next byte code and return it on success, otherwise return
+    /// `Err(Error::UnexpectedEof)` if there are no more unparsed bytes
+    /// remaining in the input slice.
+    #[inline]
     pub fn peek(&self) -> Result<u8> {
         self.input.get(self.index).copied()
         .ok_or(Error::UnexpectedEof)
     }
-    /// Advance the input cursor by `len` characters.
+    /// Advance the input cursor by `len` bytes.
     ///
     /// _Note_: this function only increases a cursor without any checks!
     #[inline(always)]
@@ -201,7 +220,10 @@ impl<'de> Deserializer<'de> {
         self.index += len;
     }
     /// Return a reference to the unparsed portion of the input slice on success.
-    /// Otherwise return `Err(Error::UnexpectedEof)`.
+    ///
+    /// If the input cursor points outside the input slice, an error
+    /// `Error::UnexpectedEof` is returned.
+    #[inline]
     pub fn input_ref(&self) -> Result<&[u8]> {
         self.input.get(self.index..).ok_or(Error::UnexpectedEof)
     }
@@ -216,19 +238,12 @@ impl<'de> Deserializer<'de> {
     pub fn split_input(&mut self, len: usize) -> Result<&'de[u8]> {
         let input = self.input.get(self.index..)
                     .ok_or(Error::UnexpectedEof)?;
-        // let (res, input) = self.input.split_at_checked(len)
-        //             .ok_or(Error::UnexpectedEof)?;
-        let (res, input) = if len <= input.len() {
-           input.split_at(len)
-        }
-        else {
-            return Err(Error::UnexpectedEof)
-        };
+        let (res, input) = input.split_at_checked(len)
+                    .ok_or(Error::UnexpectedEof)?;
         self.input = input;
         self.index = 0;
         Ok(res)
     }
-
     /// Fetch the next byte from input or return an `Err::UnexpectedEof` error.
     pub fn fetch(&mut self) -> Result<u8> {
         let c = self.peek()?;
@@ -931,12 +946,15 @@ mod tests {
         let mut de = Deserializer::from_slice(&input);
         assert_eq!(serde::de::Deserializer::is_human_readable(&(&mut de)), false);
         assert_eq!(de.input_ref().unwrap(), &[0xC0]);
+        assert_eq!(de.remaining_len(), 1);
         assert_eq!(de.fetch().unwrap(), 0xC0);
         assert_eq!(de.input_ref().unwrap(), &[]);
+        assert_eq!(de.remaining_len(), 0);
         assert_eq!(de.split_input(2), Err(Error::UnexpectedEof));
         de.eat_some(1);
         assert_eq!(de.peek(), Err(Error::UnexpectedEof));
         assert_eq!(de.fetch(), Err(Error::UnexpectedEof));
+        assert_eq!(de.remaining_len(), 0);
         assert_eq!(de.input_ref(), Err(Error::UnexpectedEof));
         assert_eq!(de.split_input(1), Err(Error::UnexpectedEof));
     }
