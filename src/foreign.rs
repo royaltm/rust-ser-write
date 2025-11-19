@@ -215,7 +215,7 @@ mod tests {
     unsafe fn oversize_bytes<'a>() -> &'a[u8] {
         let oversize = usize::try_from(i64::MAX).unwrap();
         let ptr = core::ptr::NonNull::<u8>::dangling().as_ptr();
-        core::slice::from_raw_parts(ptr, oversize)
+        unsafe { core::slice::from_raw_parts(ptr, oversize) }
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
