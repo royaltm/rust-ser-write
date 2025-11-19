@@ -1,3 +1,11 @@
+v0.4.0
+* deps: heapless 0.9.2.
+* rust-version: 1.87.
+* ser-write-json: remaining_len method added to the deserializer.
+* ser-write-json: writer_ref method added to the serializer.
+* ser-write-msgpack: remaining_len method added to the deserializer.
+* ser-write-msgpack: writer_ref method added to the serializer.
+
 v0.3.1
 * deps: bump tinyvec, smallvec
 * ser-write-json: publicly expose StringCollector

@@ -68,7 +68,7 @@ Features:
 Rust Version Requirements
 -------------------------
 
-`ser-write-json` requires Rustc version 1.81 or greater.
+`ser-write-json` requires Rustc version 1.87 or greater.
 
 [`SerWrite`]: https://docs.rs/ser-write/latest/ser_write/trait.SerWrite.html
 [Crate Link]: https://crates.io/crates/ser-write-json
@@ -78,6 +78,6 @@ Rust Version Requirements
 [Build Link]: https://github.com/royaltm/rust-ser-write/actions/workflows/rust.yml
 [Build img]: https://github.com/royaltm/rust-ser-write/actions/workflows/rust.yml/badge.svg?branch=main
 [rustc version link]: https://github.com/royaltm/rust-ser-write/tree/main/ser-write-json#rust-version-requirements
-[rustc version img]: https://img.shields.io/badge/rustc-1.81+-lightgray.svg
+[rustc version img]: https://img.shields.io/badge/rustc-1.87+-lightgray.svg
 [Coverage Link]: https://coveralls.io/github/royaltm/rust-ser-write?branch=main
 [Coverage img]: https://coveralls.io/repos/github/royaltm/rust-ser-write/badge.svg?branch=main

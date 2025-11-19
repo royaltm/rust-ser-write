@@ -130,6 +130,6 @@ Rust Version Requirements
 [Build Link]: https://github.com/royaltm/rust-ser-write/actions/workflows/rust.yml
 [Build img]: https://github.com/royaltm/rust-ser-write/actions/workflows/rust.yml/badge.svg?branch=main
 [rustc version link]: https://github.com/royaltm/rust-ser-write#rust-version-requirements
-[rustc version img]: https://img.shields.io/badge/rustc-1.81+-lightgray.svg
+[rustc version img]: https://img.shields.io/badge/rustc-1.87+-lightgray.svg
 [Coverage Link]: https://coveralls.io/github/royaltm/rust-ser-write?branch=main
 [Coverage img]: https://coveralls.io/repos/github/royaltm/rust-ser-write/badge.svg?branch=main
