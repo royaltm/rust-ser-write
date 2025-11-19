@@ -224,6 +224,11 @@ impl<W> $serializer<W> {
     pub fn writer(&mut self) -> &mut W {
         &mut self.output
     }
+    /// Provide read-only access to the inner writer.
+    #[inline(always)]
+    pub fn writer_ref(&self) -> &W {
+        &self.output
+    }
 }
 
 impl<'a, W: SerWrite> ser::Serializer for &'a mut $serializer<W>
@@ -1004,7 +1009,11 @@ mod tests {
                 let writer = SliceWriter::new(&mut buf);
                 let mut ser = <$ser>::new(writer);
                 assert_eq!(ser::Serializer::is_human_readable(&(&mut ser)), false);
+                assert_eq!(ser.writer_ref().buf, &[0u8;2][..]);
+                assert_eq!(ser.writer_ref().len, 0);
                 assert_eq!(ser.writer().write_byte(0), Ok(()));
+                assert_eq!(ser.writer_ref().buf, &[0u8;2][..]);
+                assert_eq!(ser.writer_ref().len, 1);
                 let mut writer: SliceWriter = ser.into_inner();
                 assert_eq!(writer.write_byte(1), Ok(()));
                 assert_eq!(buf, [0, 1]);
