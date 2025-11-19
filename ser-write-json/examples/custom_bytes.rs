@@ -1,4 +1,5 @@
 //! An example demonstrating how to implement custom bytes decoder/encoder traits
+#![cfg_attr(not(feature = "std"), allow(dead_code))]
 use core::fmt;
 use serde::{Serialize, Deserialize, de};
 use ser_write_json::{
