@@ -275,6 +275,11 @@ impl<W, B> Serializer<W, B> {
     pub fn writer(&mut self) -> &mut W {
         &mut self.output
     }
+    /// Provide read-only access to the inner writer.
+    #[inline(always)]
+    pub fn writer_ref(&self) -> &W {
+        &self.output
+    }
 }
 
 impl<W: SerWrite, B> Serializer<W, B> {
@@ -1082,11 +1087,26 @@ mod tests {
 
     #[test]
     fn test_json_serializer() {
-        let mut buf = [0u8;1];
-        let writer = SliceWriter::new(&mut buf);
-        let ser = SerializerByteArray::new(writer);
-        let mut writer: SliceWriter = ser.into_inner();
-        assert_eq!(writer.write_byte(0), Ok(()));
+        macro_rules! test_serializer {
+            ($ser:ty) => {
+                let mut buf = [0u8;2];
+                let writer = SliceWriter::new(&mut buf);
+                let mut ser = <$ser>::new(writer);
+                assert_eq!(ser::Serializer::is_human_readable(&(&mut ser)), true);
+                assert_eq!(ser.writer_ref().buf, &[0u8;2][..]);
+                assert_eq!(ser.writer_ref().len, 0);
+                assert_eq!(ser.writer().write_byte(0), Ok(()));
+                assert_eq!(ser.writer_ref().buf, &[0u8;2][..]);
+                assert_eq!(ser.writer_ref().len, 1);
+                let mut writer: SliceWriter = ser.into_inner();
+                assert_eq!(writer.write_byte(1), Ok(()));
+                assert_eq!(buf, [0, 1]);
+            };
+        }
+        test_serializer!(SerializerByteArray<SliceWriter>);
+        test_serializer!(SerializerByteHexStr<SliceWriter>);
+        test_serializer!(SerializerByteBase64<SliceWriter>);
+        test_serializer!(SerializerBytePass<SliceWriter>);
     }
 
     #[cfg(any(feature = "std", feature = "alloc"))]
