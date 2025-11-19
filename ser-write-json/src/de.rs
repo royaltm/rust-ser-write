@@ -893,7 +893,7 @@ impl<'de> StringByteDecoder<'de> for StringByteBase64Decoder {
     }
 }
 
-impl<'de, 'a, P> de::Deserializer<'de> for &'a mut Deserializer<'de, P>
+impl<'de, P> de::Deserializer<'de> for &mut Deserializer<'de, P>
     where P: StringByteDecoder<'de>
 {
     type Error = Error;
