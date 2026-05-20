@@ -100,7 +100,21 @@ impl<const CAP: usize> SerWrite for arrayvec::ArrayVec<u8, CAP> {
 
 #[cfg(feature = "heapless")]
 #[cfg_attr(docsrs, doc(cfg(feature = "heapless")))]
-impl<const CAP: usize> SerWrite for heapless::Vec<u8, CAP> {
+impl<LenT: heapless::LenType, const CAP: usize> SerWrite for heapless::Vec<u8, CAP, LenT> {
+    type Error = SerError;
+
+    fn write(&mut self, buf: &[u8]) -> SerResult<()> {
+        self.extend_from_slice(buf).map_err(|_| SerError::BufferFull)
+    }
+    #[inline]
+    fn write_byte(&mut self, byte: u8) -> SerResult<()> {
+        self.push(byte).map_err(|_| SerError::BufferFull)
+    }
+}
+
+#[cfg(feature = "heapless")]
+#[cfg_attr(docsrs, doc(cfg(feature = "heapless")))]
+impl<LenT: heapless::LenType> SerWrite for heapless::VecView<u8, LenT> {
     type Error = SerError;
 
     fn write(&mut self, buf: &[u8]) -> SerResult<()> {
@@ -277,15 +291,30 @@ mod tests {
     #[cfg(feature = "heapless")]
     #[test]
     fn test_ser_write_heapless() {
-        let mut writer = heapless::Vec::<u8,22>::new();
-        writer.write(b"Hello World!").unwrap();
-        writer.write_byte(b' ').unwrap();
-        writer.write_str("Good Bye!").unwrap();
-        let expected = b"Hello World! Good Bye!";
-        assert_eq!(writer.as_slice(), expected);
-        assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
-        assert_eq!(writer.write(b" ").unwrap_err(), SerError::BufferFull);
-        writer.write(b"").unwrap();
+        fn test_ser_write_heapless_impl<T: heapless::LenType>() {
+            let mut writer = heapless::Vec::<u8,22,T>::new();
+            writer.write(b"Hello World!").unwrap();
+            writer.write_byte(b' ').unwrap();
+            writer.write_str("Good Bye!").unwrap();
+            let expected = b"Hello World! Good Bye!";
+            assert_eq!(writer.as_slice(), expected);
+            assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
+            assert_eq!(writer.write(b" ").unwrap_err(), SerError::BufferFull);
+            writer.write(b"").unwrap();
+
+            let writer: &mut heapless::VecView<u8,T> = &mut heapless::Vec::<u8,22,T>::new();
+            writer.write(b"Hello World!").unwrap();
+            writer.write_byte(b' ').unwrap();
+            writer.write_str("Good Bye!").unwrap();
+            let expected = b"Hello World! Good Bye!";
+            assert_eq!(writer.as_slice(), expected);
+            assert_eq!(writer.write_byte(b' ').unwrap_err(), SerError::BufferFull);
+            assert_eq!(writer.write(b" ").unwrap_err(), SerError::BufferFull);
+            writer.write(b"").unwrap();
+        }
+        test_ser_write_heapless_impl::<usize>();
+        test_ser_write_heapless_impl::<u8>();
+        test_ser_write_heapless_impl::<u16>();
     }
 
     #[cfg(feature = "smallvec")]
