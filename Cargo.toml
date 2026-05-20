@@ -2,7 +2,7 @@
 name = "ser-write"
 description = "Common traits for writer-style serializers and deserializers designed for no_std targets"
 authors = ["Rafal Michalski <royaltm75@gmail.com>"]
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 keywords = ["embedded", "serde"]
 categories = ["no-std"]
