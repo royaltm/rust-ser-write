@@ -26,7 +26,8 @@ Depending on the enabled crate features, `SerWrite` is implemented for:
 
 * `SliceWriter` - example slice writer implementation,
 * [`arrayvec::ArrayVec<u8,CAP>`](https://crates.io/crates/arrayvec) - `arrayvec` feature,
-* [`heapless::Vec<u8,CAP>`](https://crates.io/crates/heapless) - `heapless` feature,
+* [`heapless::Vec<u8,CAP,LenT>`](https://crates.io/crates/heapless) - `heapless` feature,
+* [`heapless::VecView<u8,LenT>`](https://crates.io/crates/heapless) - `heapless` feature,
 * [`smallvec::SmallVec<[u8; CAP]>`](https://crates.io/crates/smallvec) - `smallvec` feature,
 * [`tinyvec::ArrayVec<[u8; CAP]>`](https://crates.io/crates/tinyvec) - `tinyvec` feature,
 * [`tinyvec::SliceVec<'_, u8>`](https://crates.io/crates/tinyvec) - `tinyvec` feature,
@@ -47,13 +48,13 @@ For example:
 
 ```
 [dependencies]
-ser-write-json = { version = "0.3", default-features = false }
+ser-write-json = { version = "0.4", default-features = false }
 ```
 
 If you want to also pull implementations of `SerWrite` for the foreign types add:
 
 ```
-ser-write = { version = "0.3", default-features = false, features = ["arrayvec", "heapless"] }
+ser-write = { version = "0.4", default-features = false, features = ["arrayvec", "heapless"] }
 ```
 
 In the above example implementations for: `arrayvec::ArrayVec<u8;_>` and `heapless::Vec<u8>` are selected.

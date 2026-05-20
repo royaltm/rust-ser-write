@@ -1,3 +1,7 @@
+v0.4.1
+* improved `SerWrite` implementation for `heapless::Vec<u8,CAP,LenT>`.
+* added `SerWrite` implementation for `heapless::VecView<u8,LenT>`.
+
 v0.4.0
 * deps: heapless 0.9.2.
 * rust-version: 1.87.

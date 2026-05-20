@@ -15,7 +15,7 @@ Usage
 
 ```
 [dependencies]
-ser-write-msgpack = { version = "0.3", default-features = false }
+ser-write-msgpack = { version = "0.4", default-features = false }
 ```
 
 
